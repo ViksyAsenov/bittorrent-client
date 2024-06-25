@@ -1,0 +1,28 @@
+{
+  "name": "bittorrent-client",
+  "version": "1.0.0",
+  "description": "A terminal based BitTorrent client",
+  "main": "src/index.ts",
+  "scripts": {
+    "lint": "gts lint",
+    "compile": "tsc",
+    "start": "ts-node src/index.ts",
+    "fix": "eslint --fix '**/*.ts'"
+  },
+  "keywords": [
+    "bittorrent",
+    "client"
+  ],
+  "author": "Viktor Asenov",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/bignum": "^0.0.33",
+    "@types/node": "20.12.7",
+    "gts": "^5.3.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.3"
+  },
+  "dependencies": {
+    "bignum": "^0.13.1"
+  }
+}
