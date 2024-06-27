@@ -2,7 +2,7 @@ import {MultipleFileInfo, SingleFileInfo} from './Info';
 
 interface Torrent {
   info: SingleFileInfo | MultipleFileInfo;
-  announce: Buffer;
+  announce: string;
   'announce-list'?: string[][];
   'creation date'?: number;
   comment?: string;

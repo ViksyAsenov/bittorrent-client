@@ -29,10 +29,10 @@ class TorrentParser {
     return bignum.toBuffer(size, {size: 8, endian: 'big'});
   }
 
-  getInfoHash(torrent: Torrent): Buffer {
+  getInfoHash(torrent: Torrent): string {
     const info = this.encoder.encode(torrent.info);
 
-    return crypto.createHash('sha1').update(info).digest();
+    return crypto.createHash('sha1').update(info).digest('hex');
   }
 }
 

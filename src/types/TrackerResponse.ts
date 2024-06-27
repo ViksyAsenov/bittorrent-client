@@ -3,7 +3,7 @@ export interface Peer {
   port: number;
 }
 
-interface TrackerResponse {
+export interface UdpTrackerResponse {
   action: number;
   transactionId: number;
   leechers: number;
@@ -11,4 +11,7 @@ interface TrackerResponse {
   peers: Peer[];
 }
 
-export default TrackerResponse;
+export interface HttpTrackerResponse {
+  interval: number;
+  peers: Uint8Array;
+}

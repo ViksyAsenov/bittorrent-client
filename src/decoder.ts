@@ -1,4 +1,4 @@
-import {arr2hex, arr2text, text2arr} from './utils/uint8';
+import {arr2text, text2arr} from './utils/uint8';
 
 const INTEGER_START = 0x69; // 'i'
 const STRING_DELIM = 0x3a; // ':'
@@ -13,13 +13,11 @@ const END_OF_TYPE = 0x65; // 'e'
 class BencodeDecoder {
   private position: number;
   private data: Uint8Array;
-  private encoding: string | null;
   private bytes: number;
 
   constructor() {
     this.position = 0;
     this.data = new Uint8Array();
-    this.encoding = null;
     this.bytes = 0;
   }
 
@@ -64,25 +62,13 @@ class BencodeDecoder {
   public decode(
     data: Uint8Array | string,
     start?: number,
-    end?: number,
-    encoding?: string
+    end?: number
   ): unknown {
     if (data === null || (data instanceof Uint8Array && data.length === 0)) {
       return null;
     }
 
-    if (typeof start !== 'number' && encoding === null) {
-      encoding = start as unknown as string;
-      start = undefined;
-    }
-
-    if (typeof end !== 'number' && encoding === null) {
-      encoding = end as unknown as string;
-      end = undefined;
-    }
-
     this.position = 0;
-    this.encoding = encoding || null;
 
     this.data = !(data instanceof Uint8Array)
       ? text2arr(data)
@@ -131,9 +117,12 @@ class BencodeDecoder {
     const dict: {[key: string]: unknown} = {};
 
     while (this.data[this.position] !== END_OF_TYPE) {
-      const buffer = this.decodeBuffer();
-      let key = arr2text(buffer as Uint8Array);
-      if (key.includes('\uFFFD')) key = arr2hex(buffer as Uint8Array);
+      let key = this.decodeBuffer();
+
+      if (typeof key !== 'string') {
+        key = arr2text(key);
+      }
+
       dict[key] = this.next();
     }
 
@@ -178,11 +167,20 @@ class BencodeDecoder {
     );
     const end = ++sep + length;
 
+    const buffer = this.data.slice(sep, end);
     this.position = end;
 
-    return this.encoding
-      ? arr2text(this.data.slice(sep, end))
-      : this.data.slice(sep, end);
+    return this.tryDecodeBuffer(buffer);
+  }
+
+  private tryDecodeBuffer(buffer: Uint8Array): string | Uint8Array {
+    const text = arr2text(buffer);
+
+    if (/[\uFFFD]/.test(text)) {
+      return buffer;
+    }
+
+    return text;
   }
 }
 

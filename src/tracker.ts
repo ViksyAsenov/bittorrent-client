@@ -3,26 +3,33 @@ import crypto from 'crypto';
 import generateId from './utils/generateId';
 import Torrent from './types/Torrent';
 import TorrentParser from './torrentParser';
-import TrackerResponse, {Peer} from './types/TrackerResponse';
-import {arr2text} from './utils/uint8';
+import {
+  UdpTrackerResponse,
+  HttpTrackerResponse,
+  Peer,
+} from './types/TrackerResponse';
 import TrackerRequest from './types/TrackerRequest';
 import dgram, {Socket} from 'dgram';
+import {arr2text} from './utils/uint8';
+import BencodeDecoder from './decoder';
 
 abstract class Tracker {
   protected torrentParser: TorrentParser;
   protected torrent: Torrent;
+  protected decoder: BencodeDecoder;
 
   constructor(torrent: Torrent) {
     this.torrentParser = new TorrentParser();
     this.torrent = torrent;
+    this.decoder = new BencodeDecoder();
   }
 
   abstract getPeers(callback: (peers: Peer[]) => void): void;
 }
 
-class UdpTracker extends Tracker {
+export class UdpTracker extends Tracker {
   getPeers(callback: (peers: Peer[]) => void) {
-    const url = arr2text(this.torrent.announce);
+    const url = this.torrent.announce;
 
     this.udpGetPeers(url, callback);
   }
@@ -53,7 +60,7 @@ class UdpTracker extends Tracker {
         }
         case 'announce': {
           // 4. Parse announce response
-          const announceResponse: TrackerResponse =
+          const announceResponse: UdpTrackerResponse =
             this.parseAnnounceResponse(response);
           console.log('Received announce response:', announceResponse);
 
@@ -123,7 +130,10 @@ class UdpTracker extends Tracker {
     crypto.randomBytes(4).copy(buffer, 12);
 
     // Info hash
-    this.torrentParser.getInfoHash(this.torrent).copy(buffer, 16);
+    Buffer.from(this.torrentParser.getInfoHash(this.torrent), 'hex').copy(
+      buffer,
+      16
+    );
 
     // Peer id
     generateId().copy(buffer, 36);
@@ -155,7 +165,7 @@ class UdpTracker extends Tracker {
     return buffer;
   }
 
-  private parseAnnounceResponse(response: Buffer): TrackerResponse {
+  private parseAnnounceResponse(response: Buffer): UdpTrackerResponse {
     function group(iterable: Buffer, groupSize: number) {
       const groups = [];
 
@@ -182,6 +192,7 @@ class UdpTracker extends Tracker {
 
   private udpSend(socket: Socket, message: Buffer, rawUrl: string) {
     const url = new URL(rawUrl);
+
     console.log(url);
 
     socket.send(
@@ -194,9 +205,9 @@ class UdpTracker extends Tracker {
   }
 }
 
-class HttpTracker extends Tracker {
+export class HttpTracker extends Tracker {
   async getPeers(callback: (peers: Peer[]) => void) {
-    const url = arr2text(this.torrent.announce);
+    const url = this.torrent.announce;
 
     await this.httpGetPeers(url, callback);
   }
@@ -204,52 +215,47 @@ class HttpTracker extends Tracker {
   private async httpGetPeers(url: string, callback: (peers: Peer[]) => void) {
     try {
       const params: TrackerRequest = {
-        info_hash: this.encodeBinaryData(
-          this.torrentParser.getInfoHash(this.torrent)
-        ),
-        peer_id: this.encodeBinaryData(generateId()),
-        port: 6887,
-        uploaded: 0,
-        downloaded: 0,
-        left: this.torrentParser.getSize(this.torrent).readUInt32BE(0),
-        compact: 1,
+        peer_id: arr2text(generateId()),
+        port: String(6887),
+        uploaded: String(0),
+        downloaded: String(0),
+        left: String(this.torrentParser.getSize(this.torrent).readUInt32BE(0)),
         event: 'started',
+        compact: '1',
       };
 
-      const queryString = this.serialize(params);
-      console.log(`Connecting to HTTP tracker at ${url}?${queryString}`);
+      // console.log(
+      //   `Connecting to HTTP tracker at ${url}&info_hash=${this.encodeBinaryData(
+      //     this.torrentParser.getInfoHash(this.torrent)
+      //   )}&${new URLSearchParams(params)}`
+      // );
 
-      const response = await fetch(`${url}?${queryString}`);
-      const data = await response.json();
+      const response = await fetch(
+        `${url}&info_hash=${this.encodeBinaryData(
+          this.torrentParser.getInfoHash(this.torrent)
+        )}&${new URLSearchParams(params)}`
+      );
+
+      const data = new Uint8Array(await response.arrayBuffer());
 
       const peers = this.parseHttpAnnounceResponse(data);
       callback(peers);
     } catch (error) {
+      console.error(error);
       console.error(`HTTP tracker error: ${(error as Error).message}`);
     }
   }
 
-  private encodeBinaryData(buffer: Uint8Array): string {
-    const safeChars = new Set(
-      '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-_~'.split(
-        ''
-      )
-    );
-    let encodedStr = '';
-    for (let i = 0; i < buffer.length; i++) {
-      const byte = buffer[i];
-      const char = String.fromCharCode(byte);
-      if (safeChars.has(char)) {
-        encodedStr += char;
-      } else {
-        encodedStr += '%' + byte.toString(16).toUpperCase();
-      }
-    }
-    return encodedStr;
+  private encodeBinaryData(data: string): string {
+    const infoHash = Array.from(data)
+      .map((c, i) => (i % 2 === 0 ? `%${c}` : c))
+      .join('');
+
+    return infoHash;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private serialize(obj: {[key: string]: any}): string {
+  private formatQueryParams(obj: {[key: string]: any}): string {
     return Object.keys(obj)
       .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(obj[key])}`)
       .join('&');
@@ -257,10 +263,14 @@ class HttpTracker extends Tracker {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private parseHttpAnnounceResponse(response: any): Peer[] {
-    // Assume response.peers is a string with peers encoded in the compact format
     const peers: Peer[] = [];
-    console.log(response);
-    for (let i = 0; i < response.peers.length; i += 6) {
+
+    const decodedResponse: HttpTrackerResponse = this.decoder.decode(
+      response
+    ) as HttpTrackerResponse;
+
+    // console.log(Buffer.from(decodedResponse.peers).toString('hex'));
+    for (let i = 0; i < decodedResponse.peers.length; i += 6) {
       const ip = Array.from(response.peers.slice(i, i + 4)).join('.');
       const port = response.peers.readUInt16BE(i + 4);
       peers.push({ip, port});
@@ -271,7 +281,7 @@ class HttpTracker extends Tracker {
 
 class TrackerBuilder {
   static buildTracker(torrent: Torrent): Tracker {
-    const url = arr2text(torrent.announce);
+    const url = torrent.announce;
     const parsedUrl = new URL(url);
 
     switch (parsedUrl.protocol) {
