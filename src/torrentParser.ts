@@ -7,19 +7,13 @@ import {MultipleFileInfo, SingleFileInfo} from './types/Info';
 import bignum from 'bignum';
 
 class TorrentParser {
-  private decoder: BencodeDecoder;
-  private encoder: BencodeEncoder;
+  private constructor() {}
 
-  constructor() {
-    this.decoder = new BencodeDecoder();
-    this.encoder = new BencodeEncoder();
+  static open(filepath: string): Torrent {
+    return BencodeDecoder.decode(fs.readFileSync(filepath)) as Torrent;
   }
 
-  open(filepath: string): Torrent {
-    return this.decoder.decode(fs.readFileSync(filepath)) as Torrent;
-  }
-
-  getSizeToBuffer(torrent: Torrent): Buffer {
+  static getSizeToBuffer(torrent: Torrent): Buffer {
     const size = (torrent.info as MultipleFileInfo).files
       ? (torrent.info as MultipleFileInfo).files
           .map(file => file.length)
@@ -29,7 +23,7 @@ class TorrentParser {
     return bignum.toBuffer(size, {size: 8, endian: 'big'});
   }
 
-  getSizeToNumber(torrent: Torrent): number {
+  static getSizeToNumber(torrent: Torrent): number {
     const size = (torrent.info as MultipleFileInfo).files
       ? (torrent.info as MultipleFileInfo).files
           .map(file => file.length)
@@ -39,8 +33,8 @@ class TorrentParser {
     return bignum.toNumber(size);
   }
 
-  getInfoHash(torrent: Torrent): string {
-    const info = this.encoder.encode(torrent.info);
+  static getInfoHash(torrent: Torrent): string {
+    const info = BencodeEncoder.encode(torrent.info);
 
     return crypto.createHash('sha1').update(info).digest('hex');
   }

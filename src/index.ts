@@ -2,9 +2,7 @@ import TorrentParser from './torrentParser';
 import TrackerBuilder from './tracker';
 import {Peer} from './types/TrackerResponse';
 
-const torrentParser = new TorrentParser();
-
-const torrent = torrentParser.open(process.argv[2]);
+const torrent = TorrentParser.open(process.argv[2]);
 
 const tracker = TrackerBuilder.buildTracker(torrent);
 

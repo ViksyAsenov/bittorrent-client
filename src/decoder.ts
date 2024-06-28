@@ -11,13 +11,10 @@ const END_OF_TYPE = 0x65; // 'e'
 // https://en.wikipedia.org/wiki/Bencode
 
 class BencodeDecoder {
-  private position: number;
-  private data: Uint8Array;
+  private static position: number;
+  private static data: Uint8Array;
 
-  constructor() {
-    this.position = 0;
-    this.data = new Uint8Array();
-  }
+  private constructor() {}
 
   private static getIntFromBuffer(
     buffer: Uint8Array,
@@ -57,7 +54,7 @@ class BencodeDecoder {
     return sum * sign;
   }
 
-  public decode(
+  public static decode(
     data: Uint8Array | string,
     start?: number,
     end?: number
@@ -75,7 +72,7 @@ class BencodeDecoder {
     return this.next();
   }
 
-  private next(): unknown {
+  private static next(): unknown {
     switch (this.data[this.position]) {
       case DICTIONARY_START:
         return this.decodeDictionary();
@@ -88,7 +85,7 @@ class BencodeDecoder {
     }
   }
 
-  private find(chr: number): number {
+  private static find(chr: number): number {
     let i = this.position;
     const c = this.data.length;
     const d = this.data;
@@ -107,7 +104,7 @@ class BencodeDecoder {
     );
   }
 
-  private decodeDictionary(): {[key: string]: unknown} {
+  private static decodeDictionary(): {[key: string]: unknown} {
     this.position++;
 
     const dict: {[key: string]: unknown} = {};
@@ -127,7 +124,7 @@ class BencodeDecoder {
     return dict;
   }
 
-  private decodeList(): unknown[] {
+  private static decodeList(): unknown[] {
     this.position++;
 
     const lst: unknown[] = [];
@@ -141,26 +138,18 @@ class BencodeDecoder {
     return lst;
   }
 
-  private decodeInteger(): number {
+  private static decodeInteger(): number {
     const end = this.find(END_OF_TYPE);
-    const number = BencodeDecoder.getIntFromBuffer(
-      this.data,
-      this.position + 1,
-      end
-    );
+    const number = this.getIntFromBuffer(this.data, this.position + 1, end);
 
     this.position += end + 1 - this.position;
 
     return number;
   }
 
-  private decodeBuffer(): string | Uint8Array {
+  private static decodeBuffer(): string | Uint8Array {
     let sep = this.find(STRING_DELIM);
-    const length = BencodeDecoder.getIntFromBuffer(
-      this.data,
-      this.position,
-      sep
-    );
+    const length = this.getIntFromBuffer(this.data, this.position, sep);
     const end = ++sep + length;
 
     const buffer = this.data.slice(sep, end);
@@ -169,7 +158,7 @@ class BencodeDecoder {
     return this.tryDecodeBuffer(buffer);
   }
 
-  private tryDecodeBuffer(buffer: Uint8Array): string | Uint8Array {
+  private static tryDecodeBuffer(buffer: Uint8Array): string | Uint8Array {
     const text = arr2text(buffer);
 
     if (/[\uFFFD]/.test(text)) {

@@ -14,14 +14,10 @@ import {arr2text} from './utils/uint8';
 import BencodeDecoder from './decoder';
 
 abstract class Tracker {
-  protected torrentParser: TorrentParser;
   protected torrent: Torrent;
-  protected decoder: BencodeDecoder;
 
   constructor(torrent: Torrent) {
-    this.torrentParser = new TorrentParser();
     this.torrent = torrent;
-    this.decoder = new BencodeDecoder();
   }
 
   // Follows the BitTorrent specification for sending requests to the tracker
@@ -116,7 +112,7 @@ class UdpTracker extends Tracker {
     crypto.randomBytes(4).copy(buffer, 12);
 
     // Info hash
-    Buffer.from(this.torrentParser.getInfoHash(this.torrent), 'hex').copy(
+    Buffer.from(TorrentParser.getInfoHash(this.torrent), 'hex').copy(
       buffer,
       16
     );
@@ -128,7 +124,7 @@ class UdpTracker extends Tracker {
     Buffer.alloc(8).copy(buffer, 56);
 
     // Left
-    this.torrentParser.getSizeToBuffer(this.torrent).copy(buffer, 64);
+    TorrentParser.getSizeToBuffer(this.torrent).copy(buffer, 64);
 
     // Uploaded
     Buffer.alloc(8).copy(buffer, 72);
@@ -216,14 +212,14 @@ class HttpTracker extends Tracker {
         port: String(6887),
         uploaded: String(0),
         downloaded: String(0),
-        left: String(this.torrentParser.getSizeToNumber(this.torrent)),
+        left: String(TorrentParser.getSizeToNumber(this.torrent)),
         event: 'started',
         compact: '1',
       };
 
       const response = await fetch(
         `${url}&info_hash=${this.encodeInfoHash(
-          this.torrentParser.getInfoHash(this.torrent)
+          TorrentParser.getInfoHash(this.torrent)
         )}&${new URLSearchParams(params)}`
       );
 
@@ -242,7 +238,7 @@ class HttpTracker extends Tracker {
 
     // Sometimes the format in which the peers are returned is different so we need to check
     try {
-      const decodedResponse: HttpTrackerResponse = this.decoder.decode(
+      const decodedResponse: HttpTrackerResponse = BencodeDecoder.decode(
         response
       ) as HttpTrackerResponse;
 
@@ -278,6 +274,8 @@ class HttpTracker extends Tracker {
 }
 
 class TrackerBuilder {
+  private constructor() {}
+
   static buildTracker(torrent: Torrent): Tracker {
     const url = torrent.announce;
     const parsedUrl = new URL(url);
