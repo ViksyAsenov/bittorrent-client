@@ -19,7 +19,7 @@ class TorrentParser {
     return this.decoder.decode(fs.readFileSync(filepath)) as Torrent;
   }
 
-  getSize(torrent: Torrent): Buffer {
+  getSizeToBuffer(torrent: Torrent): Buffer {
     const size = (torrent.info as MultipleFileInfo).files
       ? (torrent.info as MultipleFileInfo).files
           .map(file => file.length)
@@ -27,6 +27,16 @@ class TorrentParser {
       : (torrent.info as SingleFileInfo).length;
 
     return bignum.toBuffer(size, {size: 8, endian: 'big'});
+  }
+
+  getSizeToNumber(torrent: Torrent): number {
+    const size = (torrent.info as MultipleFileInfo).files
+      ? (torrent.info as MultipleFileInfo).files
+          .map(file => file.length)
+          .reduce((a, b) => a + b)
+      : (torrent.info as SingleFileInfo).length;
+
+    return bignum.toNumber(size);
   }
 
   getInfoHash(torrent: Torrent): string {

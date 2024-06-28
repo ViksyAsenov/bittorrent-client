@@ -1,6 +1,6 @@
 import {Buffer} from 'buffer';
 import crypto from 'crypto';
-import generateId from './utils/generateId';
+import generatePeerId from './utils/generatePeerId';
 import Torrent from './types/Torrent';
 import TorrentParser from './torrentParser';
 import {
@@ -24,6 +24,8 @@ abstract class Tracker {
     this.decoder = new BencodeDecoder();
   }
 
+  // Follows the BitTorrent specification for sending requests to the tracker
+  // https://wiki.theory.org/BitTorrentSpecification#Tracker_HTTP.2FHTTPS_Protocol
   abstract getPeers(callback: (peers: Peer[]) => void): void;
 }
 
@@ -62,6 +64,7 @@ class UdpTracker extends Tracker {
 
           // 5. Pass peers to callback
           callback(announceResponse.peers);
+          socket.close();
           break;
         }
         default: {
@@ -119,13 +122,13 @@ class UdpTracker extends Tracker {
     );
 
     // Peer id
-    generateId().copy(buffer, 36);
+    generatePeerId().copy(buffer, 36);
 
     // Downloaded
     Buffer.alloc(8).copy(buffer, 56);
 
     // Left
-    this.torrentParser.getSize(this.torrent).copy(buffer, 64);
+    this.torrentParser.getSizeToBuffer(this.torrent).copy(buffer, 64);
 
     // Uploaded
     Buffer.alloc(8).copy(buffer, 72);
@@ -209,11 +212,11 @@ class HttpTracker extends Tracker {
   private async httpGetPeers(url: string, callback: (peers: Peer[]) => void) {
     try {
       const params: TrackerRequest = {
-        peer_id: arr2text(generateId()),
+        peer_id: arr2text(generatePeerId()),
         port: String(6887),
         uploaded: String(0),
         downloaded: String(0),
-        left: String(this.torrentParser.getSize(this.torrent).readUInt32BE(0)),
+        left: String(this.torrentParser.getSizeToNumber(this.torrent)),
         event: 'started',
         compact: '1',
       };
@@ -235,9 +238,18 @@ class HttpTracker extends Tracker {
   }
 
   private parseHttpAnnounceResponse(response: Uint8Array): Peer[] {
-    const {peers: rawPeers}: HttpTrackerResponse = this.decoder.decode(
-      response
-    ) as HttpTrackerResponse;
+    let rawPeers: Uint8Array = new Uint8Array();
+
+    // Sometimes the format in which the peers are returned is different so we need to check
+    try {
+      const decodedResponse: HttpTrackerResponse = this.decoder.decode(
+        response
+      ) as HttpTrackerResponse;
+
+      rawPeers = decodedResponse.peers;
+    } catch {
+      rawPeers = response;
+    }
 
     const peers: Peer[] = [];
     for (let i = 0; i < rawPeers.length; i += 6) {

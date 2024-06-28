@@ -13,12 +13,10 @@ const END_OF_TYPE = 0x65; // 'e'
 class BencodeDecoder {
   private position: number;
   private data: Uint8Array;
-  private bytes: number;
 
   constructor() {
     this.position = 0;
     this.data = new Uint8Array();
-    this.bytes = 0;
   }
 
   private static getIntFromBuffer(
@@ -73,8 +71,6 @@ class BencodeDecoder {
     this.data = !(data instanceof Uint8Array)
       ? text2arr(data)
       : new Uint8Array(data.slice(start, end));
-
-    this.bytes = this.data.length;
 
     return this.next();
   }
