@@ -1,5 +1,9 @@
 import {concat, text2arr, getType} from './utils/uint8';
 
+// Bencode encoder
+// For more information on this format
+// https://en.wikipedia.org/wiki/Bencode
+
 class BencodeEncoder {
   private _floatConversionDetected: boolean;
   private static buffE = new Uint8Array([0x65]);

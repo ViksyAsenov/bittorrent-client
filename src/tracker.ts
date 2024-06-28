@@ -27,7 +27,7 @@ abstract class Tracker {
   abstract getPeers(callback: (peers: Peer[]) => void): void;
 }
 
-export class UdpTracker extends Tracker {
+class UdpTracker extends Tracker {
   getPeers(callback: (peers: Peer[]) => void) {
     const url = this.torrent.announce;
 
@@ -36,23 +36,20 @@ export class UdpTracker extends Tracker {
 
   private udpGetPeers(url: string, callback: (peers: Peer[]) => void) {
     const socket = dgram.createSocket('udp4');
-    console.log(`Connecting to UDP tracker at ${url}`);
 
     // 1. Send connection request
-    const connectionRequest = this.buildConnectionRequest();
+    const connectionRequest = this.buildUdpConnectionRequest();
     this.udpSend(socket, connectionRequest, url);
 
     socket.on('message', response => {
-      const responseType = this.getResponseType(response);
-      console.log(`Received response type: ${responseType}`);
+      const responseType = this.getUdpResponseType(response);
       switch (responseType) {
         case 'connect': {
           // 2. Receive and parse connection response
-          const connectionResponse = this.parseConnectionResponse(response);
-          console.log('Received connection response:', connectionResponse);
+          const connectionResponse = this.parseUdpConnectionResponse(response);
 
           // 3. Send announce request
-          const announceRequest = this.buildAnnounceRequest(
+          const announceRequest = this.buildUdpAnnounceRequest(
             connectionResponse.connectionId
           );
           this.udpSend(socket, announceRequest, url);
@@ -61,8 +58,7 @@ export class UdpTracker extends Tracker {
         case 'announce': {
           // 4. Parse announce response
           const announceResponse: UdpTrackerResponse =
-            this.parseAnnounceResponse(response);
-          console.log('Received announce response:', announceResponse);
+            this.parseUdpAnnounceResponse(response);
 
           // 5. Pass peers to callback
           callback(announceResponse.peers);
@@ -76,11 +72,11 @@ export class UdpTracker extends Tracker {
     });
 
     socket.on('error', (error: Error) => {
-      console.error(`Socket error: ${error.message}`);
+      console.error(`UDP tracker error: ${error.message}`);
     });
   }
 
-  private buildConnectionRequest(): Buffer {
+  private buildUdpConnectionRequest(): Buffer {
     const buffer = Buffer.alloc(16);
 
     // Connection id which is always 0x41727101980
@@ -88,7 +84,7 @@ export class UdpTracker extends Tracker {
     buffer.writeUint32BE(0x27101980, 4);
 
     // Action which is always 0
-    buffer.writeUInt32BE(0, 8); // 4
+    buffer.writeUInt32BE(0, 8);
 
     // Transaction id which is random 4 bytes
     crypto.randomBytes(4).copy(buffer, 12);
@@ -96,20 +92,7 @@ export class UdpTracker extends Tracker {
     return buffer;
   }
 
-  private getResponseType(response: Buffer): string {
-    const action = response.readUInt32BE(0);
-
-    switch (action) {
-      case 0:
-        return 'connect';
-      case 1:
-        return 'announce';
-    }
-
-    return 'unknown';
-  }
-
-  private parseConnectionResponse(response: Buffer) {
+  private parseUdpConnectionResponse(response: Buffer) {
     return {
       action: response.readUInt32BE(0),
       transactionId: response.readUInt32BE(4),
@@ -117,7 +100,7 @@ export class UdpTracker extends Tracker {
     };
   }
 
-  private buildAnnounceRequest(connectionId: Buffer, port = 6887): Buffer {
+  private buildUdpAnnounceRequest(connectionId: Buffer, port = 6887): Buffer {
     const buffer = Buffer.alloc(98);
 
     // Connection id
@@ -165,7 +148,7 @@ export class UdpTracker extends Tracker {
     return buffer;
   }
 
-  private parseAnnounceResponse(response: Buffer): UdpTrackerResponse {
+  private parseUdpAnnounceResponse(response: Buffer): UdpTrackerResponse {
     function group(iterable: Buffer, groupSize: number) {
       const groups = [];
 
@@ -193,8 +176,6 @@ export class UdpTracker extends Tracker {
   private udpSend(socket: Socket, message: Buffer, rawUrl: string) {
     const url = new URL(rawUrl);
 
-    console.log(url);
-
     socket.send(
       message,
       0,
@@ -203,9 +184,22 @@ export class UdpTracker extends Tracker {
       url.hostname as string
     );
   }
+
+  private getUdpResponseType(response: Buffer): string {
+    const action = response.readUInt32BE(0);
+
+    switch (action) {
+      case 0:
+        return 'connect';
+      case 1:
+        return 'announce';
+    }
+
+    return 'unknown';
+  }
 }
 
-export class HttpTracker extends Tracker {
+class HttpTracker extends Tracker {
   async getPeers(callback: (peers: Peer[]) => void) {
     const url = this.torrent.announce;
 
@@ -224,14 +218,8 @@ export class HttpTracker extends Tracker {
         compact: '1',
       };
 
-      // console.log(
-      //   `Connecting to HTTP tracker at ${url}&info_hash=${this.encodeBinaryData(
-      //     this.torrentParser.getInfoHash(this.torrent)
-      //   )}&${new URLSearchParams(params)}`
-      // );
-
       const response = await fetch(
-        `${url}&info_hash=${this.encodeBinaryData(
+        `${url}&info_hash=${this.encodeInfoHash(
           this.torrentParser.getInfoHash(this.torrent)
         )}&${new URLSearchParams(params)}`
       );
@@ -239,43 +227,41 @@ export class HttpTracker extends Tracker {
       const data = new Uint8Array(await response.arrayBuffer());
 
       const peers = this.parseHttpAnnounceResponse(data);
+
       callback(peers);
     } catch (error) {
-      console.error(error);
       console.error(`HTTP tracker error: ${(error as Error).message}`);
     }
   }
 
-  private encodeBinaryData(data: string): string {
-    const infoHash = Array.from(data)
-      .map((c, i) => (i % 2 === 0 ? `%${c}` : c))
-      .join('');
-
-    return infoHash;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private formatQueryParams(obj: {[key: string]: any}): string {
-    return Object.keys(obj)
-      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(obj[key])}`)
-      .join('&');
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private parseHttpAnnounceResponse(response: any): Peer[] {
-    const peers: Peer[] = [];
-
-    const decodedResponse: HttpTrackerResponse = this.decoder.decode(
+  private parseHttpAnnounceResponse(response: Uint8Array): Peer[] {
+    const {peers: rawPeers}: HttpTrackerResponse = this.decoder.decode(
       response
     ) as HttpTrackerResponse;
 
-    // console.log(Buffer.from(decodedResponse.peers).toString('hex'));
-    for (let i = 0; i < decodedResponse.peers.length; i += 6) {
-      const ip = Array.from(response.peers.slice(i, i + 4)).join('.');
-      const port = response.peers.readUInt16BE(i + 4);
+    const peers: Peer[] = [];
+    for (let i = 0; i < rawPeers.length; i += 6) {
+      const ipBytes = rawPeers.slice(i, i + 4);
+      const portBytes = rawPeers.slice(i + 4, i + 6);
+
+      const ip = ipBytes.join('.');
+
+      // Combine the two port bytes into a single 16-bit integer
+      const port = (portBytes[0] << 8) | portBytes[1];
+
       peers.push({ip, port});
     }
+
     return peers;
+  }
+
+  // Info_hash must be encoded using the "%nn" format, where nn is the hexadecimal value of the byte.
+  private encodeInfoHash(infoHash: string): string {
+    const encodedInfoHash = Array.from(infoHash)
+      .map((c, i) => (i % 2 === 0 ? `%${c}` : c))
+      .join('');
+
+    return encodedInfoHash;
   }
 }
 

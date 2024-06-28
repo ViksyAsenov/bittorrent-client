@@ -6,7 +6,7 @@ const DICTIONARY_START = 0x64; // 'd'
 const LIST_START = 0x6c; // 'l'
 const END_OF_TYPE = 0x65; // 'e'
 
-// Bencode encoder and decoder
+// Bencode decoder
 // For more information on this format
 // https://en.wikipedia.org/wiki/Bencode
 
