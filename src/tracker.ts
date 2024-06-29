@@ -263,7 +263,7 @@ class HttpTracker extends Tracker {
     return peers;
   }
 
-  // Info_hash must be encoded using the "%nn" format, where nn is the hexadecimal value of the byte.
+  // Info hash must be encoded using the "%nn" format, where nn is the hexadecimal value of the byte.
   private encodeInfoHash(infoHash: string): string {
     const encodedInfoHash = Array.from(infoHash)
       .map((c, i) => (i % 2 === 0 ? `%${c}` : c))
