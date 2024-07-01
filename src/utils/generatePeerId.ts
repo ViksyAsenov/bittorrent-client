@@ -2,7 +2,7 @@ let twelveDigitNumber: number | null = null;
 
 // peerId uses the following encoding:
 // '-', two characters for client id, four ascii digits for version number, '-'
-// followed by random numbers
+// followed by random numbers until length of 20
 export default function generatePeerId(): Buffer {
   if (!twelveDigitNumber) {
     twelveDigitNumber = Math.floor(

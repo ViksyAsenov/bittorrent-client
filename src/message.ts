@@ -2,7 +2,10 @@
 // and parses incoming messages
 // https://wiki.theory.org/BitTorrentSpecification#Messages
 
+import TorrentParser from './torrentParser';
 import MessagePayload from './types/MessagePayload';
+import Torrent from './types/Torrent';
+import generatePeerId from './utils/generatePeerId';
 
 class MessageHandler {
   private constructor() {}
@@ -37,6 +40,38 @@ class MessageHandler {
       id,
       payload: parsedPayload,
     };
+  }
+
+  // Follows https://wiki.theory.org/BitTorrentSpecification#Handshake
+  static buildHandshake(torrent: Torrent) {
+    const buffer = Buffer.alloc(68);
+
+    // // Pstrlen
+    buffer.writeUInt8(19, 0);
+
+    // // Pstr
+    buffer.write('BitTorrent protocol', 1);
+
+    // // Reserved
+    buffer.writeUInt32BE(0, 20);
+    buffer.writeUInt32BE(0, 24);
+
+    // // Info Hash
+    Buffer.from(TorrentParser.getInfoHash(torrent), 'hex').copy(buffer, 28);
+
+    // // Peer id
+    generatePeerId().copy(buffer, 48);
+
+    return buffer;
+  }
+
+  static isHandshake(message: Buffer, torrent: Torrent) {
+    return (
+      message.length === 68 &&
+      message.toString('utf8', 1, 20) === 'BitTorrent protocol' &&
+      TorrentParser.getInfoHash(torrent) ===
+        message.slice(28, 48).toString('hex')
+    );
   }
 
   static buildKeepAlive() {
