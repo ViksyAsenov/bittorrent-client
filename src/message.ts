@@ -46,20 +46,20 @@ class MessageHandler {
   static buildHandshake(torrent: Torrent) {
     const buffer = Buffer.alloc(68);
 
-    // // Pstrlen
+    // Pstrlen
     buffer.writeUInt8(19, 0);
 
-    // // Pstr
+    // Pstr
     buffer.write('BitTorrent protocol', 1);
 
-    // // Reserved
+    // Reserved
     buffer.writeUInt32BE(0, 20);
     buffer.writeUInt32BE(0, 24);
 
-    // // Info Hash
+    // Info Hash
     Buffer.from(TorrentParser.getInfoHash(torrent), 'hex').copy(buffer, 28);
 
-    // // Peer id
+    // Peer id
     generatePeerId().copy(buffer, 48);
 
     return buffer;
