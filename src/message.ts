@@ -142,7 +142,7 @@ class MessageHandler {
   }
 
   static buildBitfield(bitfield: Buffer) {
-    const buffer = Buffer.alloc(14);
+    const buffer = Buffer.alloc(bitfield.length + 5);
 
     // Length
     buffer.writeUInt32BE(bitfield.length + 1, 0);

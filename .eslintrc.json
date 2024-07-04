@@ -2,7 +2,7 @@
   "extends": "./node_modules/gts/",
   "settings": {
     "node": {
-      "version": ">=12.6.0"
+      "version": ">=14.0.0"
     }
   }
 }

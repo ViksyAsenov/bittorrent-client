@@ -15,9 +15,19 @@ import BencodeDecoder from './decoder';
 
 abstract class Tracker {
   protected torrent: Torrent;
+  protected url: string;
 
   constructor(torrent: Torrent) {
     this.torrent = torrent;
+
+    if (
+      this.torrent['announce-list'] &&
+      this.torrent['announce-list'].length > 0
+    ) {
+      this.url = this.torrent['announce-list'][0][0];
+    } else {
+      this.url = this.torrent.announce;
+    }
   }
 
   // Follows the BitTorrent specification for sending requests to the tracker
@@ -27,9 +37,7 @@ abstract class Tracker {
 
 class UdpTracker extends Tracker {
   getPeers(callback: (peers: Peer[]) => void) {
-    const url = this.torrent.announce;
-
-    this.udpGetPeers(url, callback);
+    this.udpGetPeers(this.url, callback);
   }
 
   private udpGetPeers(url: string, callback: (peers: Peer[]) => void) {
@@ -133,7 +141,7 @@ class UdpTracker extends Tracker {
     buffer.writeUInt32BE(0, 80);
 
     // IP address
-    buffer.writeUInt32BE(0, 80);
+    buffer.writeUInt32BE(0, 84);
 
     // Key
     crypto.randomBytes(4).copy(buffer, 88);
@@ -200,9 +208,7 @@ class UdpTracker extends Tracker {
 
 class HttpTracker extends Tracker {
   async getPeers(callback: (peers: Peer[]) => void) {
-    const url = this.torrent.announce;
-
-    await this.httpGetPeers(url, callback);
+    await this.httpGetPeers(this.url, callback);
   }
 
   private async httpGetPeers(url: string, callback: (peers: Peer[]) => void) {

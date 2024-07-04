@@ -1,7 +1,7 @@
 interface BasicInfo {
   name: string;
   'piece length': number;
-  pieces: string;
+  pieces: Buffer;
   private?: number;
 }
 
