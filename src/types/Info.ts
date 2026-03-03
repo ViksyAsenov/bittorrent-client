@@ -1,16 +1,16 @@
-interface BasicInfo {
+interface BasicInfoInterface {
   name: string;
   'piece length': number;
   pieces: Buffer;
   private?: number;
 }
 
-export interface SingleFileInfo extends BasicInfo {
+export interface SingleFileInfoInterface extends BasicInfoInterface {
   length: number;
   md5sum?: string;
 }
 
-export interface MultipleFileInfo extends BasicInfo {
+export interface MultipleFileInfoInterface extends BasicInfoInterface {
   files: {
     length: number;
     md5sum?: string;

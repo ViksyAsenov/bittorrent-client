@@ -1,13 +1,13 @@
 import TorrentParser from './torrentParser';
-import MessagePayload from './types/MessagePayload';
-import Torrent from './types/Torrent';
+import MessagePayloadInterface from './types/MessagePayload';
+import TorrentInterface from './types/Torrent';
 
 class Queue {
   public chocked: boolean;
-  private queue: MessagePayload[];
-  private torrent: Torrent;
+  private queue: MessagePayloadInterface[];
+  private torrent: TorrentInterface;
 
-  constructor(torrent: Torrent) {
+  constructor(torrent: TorrentInterface) {
     this.chocked = true;
     this.queue = [];
     this.torrent = torrent;
@@ -28,6 +28,10 @@ class Queue {
 
       this.queue.push(pieceBlock);
     }
+  }
+
+  enqueue(block: MessagePayloadInterface) {
+    this.queue.push(block);
   }
 
   poll() {

@@ -1,23 +1,23 @@
 import {Buffer} from 'buffer';
 import crypto from 'crypto';
 import generatePeerId from './utils/generatePeerId';
-import Torrent from './types/Torrent';
+import TorrentInterface from './types/Torrent';
 import TorrentParser from './torrentParser';
 import {
-  UdpTrackerResponse,
-  HttpTrackerResponse,
-  Peer,
+  UdpTrackerResponseInterface,
+  HttpTrackerResponseInterface,
+  PeerInterface,
 } from './types/TrackerResponse';
-import TrackerRequest from './types/TrackerRequest';
+import TrackerRequestInterface from './types/TrackerRequest';
 import dgram, {Socket} from 'dgram';
 import {arr2text} from './utils/uint8';
 import BencodeDecoder from './decoder';
 
 abstract class Tracker {
-  protected torrent: Torrent;
+  protected torrent: TorrentInterface;
   protected url: string;
 
-  constructor(torrent: Torrent) {
+  constructor(torrent: TorrentInterface) {
     this.torrent = torrent;
 
     if (
@@ -32,15 +32,15 @@ abstract class Tracker {
 
   // Follows the BitTorrent specification for sending requests to the tracker
   // https://wiki.theory.org/BitTorrentSpecification#Tracker_HTTP.2FHTTPS_Protocol
-  abstract getPeers(callback: (peers: Peer[]) => void): void;
+  abstract getPeers(callback: (peers: PeerInterface[]) => void): void;
 }
 
 class UdpTracker extends Tracker {
-  getPeers(callback: (peers: Peer[]) => void) {
+  getPeers(callback: (peers: PeerInterface[]) => void) {
     this.udpGetPeers(this.url, callback);
   }
 
-  private udpGetPeers(url: string, callback: (peers: Peer[]) => void) {
+  private udpGetPeers(url: string, callback: (peers: PeerInterface[]) => void) {
     const socket = dgram.createSocket('udp4');
 
     // 1. Send connection request
@@ -63,7 +63,7 @@ class UdpTracker extends Tracker {
         }
         case 'announce': {
           // 4. Parse announce response
-          const announceResponse: UdpTrackerResponse =
+          const announceResponse: UdpTrackerResponseInterface =
             this.parseUdpAnnounceResponse(response);
 
           // 5. Pass peers to callback
@@ -155,7 +155,9 @@ class UdpTracker extends Tracker {
     return buffer;
   }
 
-  private parseUdpAnnounceResponse(response: Buffer): UdpTrackerResponse {
+  private parseUdpAnnounceResponse(
+    response: Buffer
+  ): UdpTrackerResponseInterface {
     function group(iterable: Buffer, groupSize: number) {
       const groups = [];
 
@@ -180,7 +182,14 @@ class UdpTracker extends Tracker {
     };
   }
 
-  private udpSend(socket: Socket, message: Buffer, rawUrl: string) {
+  private udpSend(
+    socket: Socket,
+    message: Buffer,
+    rawUrl: string,
+    callback = (error: Error | null) => {
+      console.log(error, 'UDP send callback');
+    }
+  ) {
     const url = new URL(rawUrl);
 
     socket.send(
@@ -188,7 +197,8 @@ class UdpTracker extends Tracker {
       0,
       message.length,
       Number(url.port),
-      url.hostname as string
+      url.hostname as string,
+      callback
     );
   }
 
@@ -207,13 +217,16 @@ class UdpTracker extends Tracker {
 }
 
 class HttpTracker extends Tracker {
-  async getPeers(callback: (peers: Peer[]) => void) {
+  async getPeers(callback: (peers: PeerInterface[]) => void) {
     await this.httpGetPeers(this.url, callback);
   }
 
-  private async httpGetPeers(url: string, callback: (peers: Peer[]) => void) {
+  private async httpGetPeers(
+    url: string,
+    callback: (peers: PeerInterface[]) => void
+  ) {
     try {
-      const params: TrackerRequest = {
+      const params: TrackerRequestInterface = {
         peer_id: arr2text(generatePeerId()),
         port: String(6887),
         uploaded: String(0),
@@ -223,11 +236,13 @@ class HttpTracker extends Tracker {
         compact: '1',
       };
 
-      const response = await fetch(
-        `${url}&info_hash=${this.encodeInfoHash(
-          TorrentParser.getInfoHash(this.torrent)
-        )}&${new URLSearchParams(params)}`
-      );
+      const fullUrl = `${url}&info_hash=${this.encodeInfoHash(
+        TorrentParser.getInfoHash(this.torrent)
+      )}&${new URLSearchParams(params as unknown as Record<string, string>)}`;
+
+      const response = await fetch(fullUrl);
+
+      console.log(fullUrl);
 
       const data = new Uint8Array(await response.arrayBuffer());
 
@@ -239,21 +254,23 @@ class HttpTracker extends Tracker {
     }
   }
 
-  private parseHttpAnnounceResponse(response: Uint8Array): Peer[] {
+  private parseHttpAnnounceResponse(response: Uint8Array): PeerInterface[] {
     let rawPeers: Uint8Array = new Uint8Array();
 
     // Sometimes the format in which the peers are returned is different so we need to check
     try {
-      const decodedResponse: HttpTrackerResponse = BencodeDecoder.decode(
-        response
-      ) as HttpTrackerResponse;
+      const decodedResponse: HttpTrackerResponseInterface =
+        BencodeDecoder.decode(response) as HttpTrackerResponseInterface;
 
       rawPeers = decodedResponse.peers;
-    } catch {
+    } catch (error) {
+      console.error(
+        `Error decoding HTTP tracker response: ${(error as Error).message}`
+      );
       rawPeers = response;
     }
 
-    const peers: Peer[] = [];
+    const peers: PeerInterface[] = [];
     for (let i = 0; i < rawPeers.length; i += 6) {
       const ipBytes = rawPeers.slice(i, i + 4);
       const portBytes = rawPeers.slice(i + 4, i + 6);
@@ -282,7 +299,7 @@ class HttpTracker extends Tracker {
 class TrackerBuilder {
   private constructor() {}
 
-  static buildTracker(torrent: Torrent): Tracker {
+  static buildTracker(torrent: TorrentInterface): Tracker {
     const url = torrent.announce;
     const parsedUrl = new URL(url);
 

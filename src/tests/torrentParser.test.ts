@@ -1,8 +1,8 @@
 import TorrentParser from '../torrentParser';
-import Torrent from '../types/Torrent';
+import TorrentInterface from '../types/Torrent';
 
 describe('TorrentParser', () => {
-  const torrent: Torrent = TorrentParser.open('sample.torrent');
+  const torrent: TorrentInterface = TorrentParser.open('sample.torrent');
 
   test('should have correct announce URL', () => {
     expect(torrent.announce).toBe('http://the-boys.torrent');

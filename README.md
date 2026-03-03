@@ -1,6 +1,6 @@
 # BitTorrent Client - ViksyTorrent
 
-The ViksyTorrent client is a simple implementation that adheres to the BitTorrent protocol specifications. It currently only supports torrents with a single file.
+The ViksyTorrent client is a simple implementation that adheres to the BitTorrent protocol specifications.
 
 ## Features
 
@@ -11,23 +11,22 @@ The ViksyTorrent client is a simple implementation that adheres to the BitTorren
 
 ## Usage
 
- Clone the repository:
+Clone the repository:
 
 ```bash
 git clone https://github.com/ViksyAsenov/bittorrent-client
 ```
 
 Install the dependencies:
+
 ```bash
 npm install
 ```
 
 Start the client with the path to the .torrent file
+
 ```bash
-npm start /path/to/your/torrent-file.torrent
+npm run download /path/to/your/torrent-file.torrent
 ```
 
 And thats it! The file within the torrent will be downloaded in the project's directory!
-
-
-

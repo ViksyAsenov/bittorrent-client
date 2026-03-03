@@ -1,7 +1,7 @@
-import {MultipleFileInfo, SingleFileInfo} from './Info';
+import {MultipleFileInfoInterface, SingleFileInfoInterface} from './Info';
 
-interface Torrent {
-  info: SingleFileInfo | MultipleFileInfo;
+export default interface TorrentInterface {
+  info: SingleFileInfoInterface | MultipleFileInfoInterface;
   announce: string;
   'announce-list'?: string[][];
   'creation date'?: number;
@@ -9,5 +9,3 @@ interface Torrent {
   'created by'?: string;
   encoding?: string;
 }
-
-export default Torrent;

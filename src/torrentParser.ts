@@ -1,9 +1,9 @@
 import * as fs from 'fs';
 import BencodeDecoder from './decoder';
-import Torrent from './types/Torrent';
+import TorrentInterface from './types/Torrent';
 import BencodeEncoder from './encoder';
 import crypto from 'crypto';
-import {MultipleFileInfo, SingleFileInfo} from './types/Info';
+import {MultipleFileInfoInterface, SingleFileInfoInterface} from './types/Info';
 import bignum from 'bignum';
 
 class TorrentParser {
@@ -11,31 +11,31 @@ class TorrentParser {
 
   private constructor() {}
 
-  static open(filepath: string): Torrent {
-    return BencodeDecoder.decode(fs.readFileSync(filepath)) as Torrent;
+  static open(filepath: string): TorrentInterface {
+    return BencodeDecoder.decode(fs.readFileSync(filepath)) as TorrentInterface;
   }
 
-  static getSizeToBuffer(torrent: Torrent): Buffer {
-    const size = (torrent.info as MultipleFileInfo).files
-      ? (torrent.info as MultipleFileInfo).files
+  static getSizeToBuffer(torrent: TorrentInterface): Buffer {
+    const size = (torrent.info as MultipleFileInfoInterface).files
+      ? (torrent.info as MultipleFileInfoInterface).files
           .map(file => file.length)
           .reduce((a, b) => a + b)
-      : (torrent.info as SingleFileInfo).length;
+      : (torrent.info as SingleFileInfoInterface).length;
 
     return bignum.toBuffer(size, {size: 8, endian: 'big'});
   }
 
-  static getSizeToNumber(torrent: Torrent): number {
+  static getSizeToNumber(torrent: TorrentInterface): number {
     return bignum.fromBuffer(this.getSizeToBuffer(torrent)).toNumber();
   }
 
-  static getInfoHash(torrent: Torrent): string {
+  static getInfoHash(torrent: TorrentInterface): string {
     const info = BencodeEncoder.encode(torrent.info);
 
     return crypto.createHash('sha1').update(info).digest('hex');
   }
 
-  static getPieceLength(torrent: Torrent, pieceIndex: number) {
+  static getPieceLength(torrent: TorrentInterface, pieceIndex: number) {
     const totalLength = this.getSizeToNumber(torrent);
 
     const pieceLength = torrent.info['piece length'];
@@ -43,26 +43,30 @@ class TorrentParser {
     const lastPieceLength = totalLength % pieceLength;
     const lastPieceIndex = Math.floor(totalLength / pieceLength);
 
+    // If totalLength is exactly divisible by pieceLength, every piece is full-size
+    if (lastPieceLength === 0) return pieceLength;
     return lastPieceIndex === pieceIndex ? lastPieceLength : pieceLength;
   }
 
-  static getBlocksPerPiece(torrent: Torrent, pieceIndex: number) {
+  static getBlocksPerPiece(torrent: TorrentInterface, pieceIndex: number) {
     const pieceLength = this.getPieceLength(torrent, pieceIndex);
 
     return Math.ceil(pieceLength / this.blockLength);
   }
 
   static getBlockLength(
-    torrent: Torrent,
+    torrent: TorrentInterface,
     pieceIndex: number,
     blockIndex: number
   ) {
     const pieceLength = this.getPieceLength(torrent, pieceIndex);
 
-    const lastPieceLength = pieceLength % this.blockLength;
-    const lastPieceIndex = Math.floor(pieceLength / this.blockLength);
+    const lastBlockLength = pieceLength % this.blockLength;
+    const lastBlockIndex = Math.ceil(pieceLength / this.blockLength) - 1;
 
-    return blockIndex === lastPieceIndex ? lastPieceLength : this.blockLength;
+    // If pieceLength is exactly divisible by blockLength, every block is full-size
+    if (lastBlockLength === 0) return this.blockLength;
+    return blockIndex === lastBlockIndex ? lastBlockLength : this.blockLength;
   }
 }
 

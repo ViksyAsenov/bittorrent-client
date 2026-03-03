@@ -3,14 +3,15 @@
 // https://wiki.theory.org/BitTorrentSpecification#Messages
 
 import TorrentParser from './torrentParser';
-import MessagePayload from './types/MessagePayload';
-import Torrent from './types/Torrent';
+import MessagePayloadInterface from './types/MessagePayload';
+import TorrentInterface from './types/Torrent';
 import generatePeerId from './utils/generatePeerId';
 
 class MessageHandler {
   private constructor() {}
 
   static parseMessage(message: Buffer) {
+    const size = message.readInt32BE(0);
     // If the message isn't longer than 4, that means it is keep-alive
     // and has no id
     const id = message.length > 4 ? message.readInt8(4) : null;
@@ -18,7 +19,7 @@ class MessageHandler {
     // If the message isn't longer than 5, that means it has no payload
     const payload = message.length > 5 ? message.slice(5) : null;
 
-    let parsedPayload: MessagePayload | null = null;
+    let parsedPayload: MessagePayloadInterface | Buffer | null = payload;
 
     if (id === 6 || id === 7 || id === 8) {
       const rest = (payload as Buffer).slice(8);
@@ -31,19 +32,19 @@ class MessageHandler {
       if (id === 7) {
         parsedPayload['block'] = rest;
       } else {
-        parsedPayload['length'] = rest.length;
+        parsedPayload['length'] = rest.readInt32BE(0);
       }
     }
 
     return {
-      size: message.readInt32BE(0),
+      size,
       id,
       payload: parsedPayload,
     };
   }
 
   // Follows https://wiki.theory.org/BitTorrentSpecification#Handshake
-  static buildHandshake(torrent: Torrent) {
+  static buildHandshake(torrent: TorrentInterface) {
     const buffer = Buffer.alloc(68);
 
     // Pstrlen
@@ -65,7 +66,7 @@ class MessageHandler {
     return buffer;
   }
 
-  static isHandshake(message: Buffer, torrent: Torrent) {
+  static isHandshake(message: Buffer, torrent: TorrentInterface) {
     return (
       message.length === 68 &&
       message.toString('utf8', 1, 20) === 'BitTorrent protocol' &&
@@ -156,7 +157,7 @@ class MessageHandler {
     return buffer;
   }
 
-  static buildRequest(payload: MessagePayload) {
+  static buildRequest(payload: MessagePayloadInterface) {
     const buffer = Buffer.alloc(17);
 
     // Length
@@ -177,7 +178,7 @@ class MessageHandler {
     return buffer;
   }
 
-  static buildPiece(payload: MessagePayload) {
+  static buildPiece(payload: MessagePayloadInterface) {
     const buffer = Buffer.alloc((payload.block as Buffer).length + 13);
 
     // Length
@@ -198,7 +199,7 @@ class MessageHandler {
     return buffer;
   }
 
-  static buildCancel(payload: MessagePayload) {
+  static buildCancel(payload: MessagePayloadInterface) {
     const buffer = Buffer.alloc(17);
 
     // Length
