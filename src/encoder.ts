@@ -93,13 +93,6 @@ class BencodeEncoder {
 
     if (val !== data && !this._floatConversionDetected) {
       this._floatConversionDetected = true;
-      console.warn(
-        'WARNING: Possible data corruption detected with value "' + data + '":',
-        'Bencoding only defines support for integers, value was converted to "' +
-          val +
-          '"'
-      );
-      console.trace();
     }
   }
 

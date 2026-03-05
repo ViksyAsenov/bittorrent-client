@@ -1,5 +1,4 @@
 export default interface TrackerRequestInterface {
-  // Contains info_hash as well but should be added after url encoding has been done
   peer_id: string;
   port: string;
   uploaded: string;

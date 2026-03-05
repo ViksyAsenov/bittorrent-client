@@ -45,6 +45,7 @@ class TorrentParser {
 
     // If totalLength is exactly divisible by pieceLength, every piece is full-size
     if (lastPieceLength === 0) return pieceLength;
+    
     return lastPieceIndex === pieceIndex ? lastPieceLength : pieceLength;
   }
 
@@ -65,7 +66,10 @@ class TorrentParser {
     const lastBlockIndex = Math.ceil(pieceLength / this.blockLength) - 1;
 
     // If pieceLength is exactly divisible by blockLength, every block is full-size
-    if (lastBlockLength === 0) return this.blockLength;
+    if (lastBlockLength === 0) {
+      return this.blockLength;
+    }
+
     return blockIndex === lastBlockIndex ? lastBlockLength : this.blockLength;
   }
 }

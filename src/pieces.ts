@@ -5,62 +5,12 @@ import TorrentInterface from './types/Torrent';
 class Pieces {
   public requested: boolean[][];
   private received: boolean[][];
-  private lastReportedPercent: number;
   private torrent: TorrentInterface;
 
   constructor(torrent: TorrentInterface) {
     this.torrent = torrent;
     this.requested = this.buildPieces();
     this.received = this.buildPieces();
-    this.lastReportedPercent = -1;
-
-    // Debug prints
-    const totalSize = TorrentParser.getSizeToNumber(torrent);
-    const pieceLength = torrent.info['piece length'];
-    const numberOfPieces = this.requested.length;
-    const numberOfPiecesFromHashes = torrent.info.pieces.length / 20; // Correct count
-
-    console.log('Total size:', totalSize);
-    console.log('Piece length:', pieceLength);
-    console.log('Number of pieces (from hashes):', numberOfPiecesFromHashes);
-    console.log('Number of pieces (built):', numberOfPieces);
-
-    const showCount = Math.min(5, numberOfPieces);
-    console.log(`First ${showCount} pieces:`);
-    for (let i = 0; i < showCount; i++) {
-      const pieceSize = TorrentParser.getPieceLength(torrent, i);
-      console.log(
-        `Piece ${i}: ${this.requested[i].length} blocks, Piece size: ${pieceSize}`
-      );
-    }
-
-    if (numberOfPieces > showCount * 2) {
-      console.log('...');
-    }
-
-    console.log(`Last ${showCount} pieces:`);
-    for (
-      let i = Math.max(showCount, numberOfPieces - showCount);
-      i < numberOfPieces;
-      i++
-    ) {
-      const pieceSize = TorrentParser.getPieceLength(torrent, i);
-      console.log(
-        `Piece ${i}: ${this.requested[i].length} blocks, Piece size: ${pieceSize}`
-      );
-    }
-
-    const expectedNumberOfPieces = Math.ceil(totalSize / pieceLength);
-    console.log(
-      'Expected number of pieces (calculated):',
-      expectedNumberOfPieces
-    );
-
-    const totalBlocks = this.requested.reduce(
-      (sum, blocks) => sum + blocks.length,
-      0
-    );
-    console.log('Total blocks:', totalBlocks);
   }
 
   private buildPieces(): boolean[][] {
@@ -95,8 +45,17 @@ class Pieces {
     const blockIndex = Math.floor(pieceBlock.begin / TorrentParser.blockLength);
 
     if (this.requested.every(blocks => blocks.every(i => i))) {
-      console.log('All blocks requested - resetting to end-game mode');
       this.requested = this.received.map(blocks => blocks.slice());
+    }
+
+    if (!this.received[pieceBlock.index]) {
+      return false;
+    }
+
+    // In endgame mode, a block is "needed" if it hasn't been received yet,
+    // even if it was already requested from another peer.
+    if (this.isEndGame()) {
+      return !this.received[pieceBlock.index][blockIndex];
     }
 
     return !this.requested[pieceBlock.index][blockIndex];
@@ -112,7 +71,7 @@ class Pieces {
     return this.received.every(blocks => blocks.every(i => i));
   }
 
-  printPercentDone() {
+  getPercentDone(): number {
     const downloaded = this.received.reduce((totalBlocks, blocks) => {
       return blocks.filter(i => i).length + totalBlocks;
     }, 0);
@@ -121,32 +80,7 @@ class Pieces {
       return blocks.length + totalBlocks;
     }, 0);
 
-    const percent = Number(((downloaded / total) * 100).toFixed(2));
-
-    if (percent > this.lastReportedPercent) {
-      console.log(`progress: ${percent}% downloaded: ${downloaded}/${total}`);
-      this.lastReportedPercent = percent;
-
-      if (percent > 98) {
-        const incompletePieces: number[] = [];
-        this.received.forEach((blocks, pieceIndex) => {
-          if (!blocks.every(block => block)) {
-            incompletePieces.push(pieceIndex);
-          }
-        });
-        console.log(`Incomplete pieces: [${incompletePieces.join(', ')}]`);
-
-        incompletePieces.forEach(pieceIndex => {
-          const completedBlocks = this.received[pieceIndex].filter(
-            block => block
-          ).length;
-          const totalBlocks = this.received[pieceIndex].length;
-          console.log(
-            `Piece ${pieceIndex}: ${completedBlocks}/${totalBlocks} blocks`
-          );
-        });
-      }
-    }
+    return Number(((downloaded / total) * 100).toFixed(2));
   }
 
   getBitfield(): Buffer {
@@ -164,19 +98,32 @@ class Pieces {
       (sum, blocks) => sum + blocks.filter(b => !b).length,
       0
     );
-    return incompleteBlocks > 0 && incompleteBlocks <= 100;
+    return incompleteBlocks > 0 && incompleteBlocks <= 25;
   }
 
-  // pieces.ts
   getMissingBlocks(): MessagePayloadInterface[] {
     const blocks: MessagePayloadInterface[] = [];
+    const totalPieces = this.getTotalPieces();
+
     this.received.forEach((piece, pieceIndex) => {
       piece.forEach((isReceived, blockIndex) => {
         if (!isReceived) {
+          const isLastPiece = pieceIndex === totalPieces - 1;
+          const isLastBlockInPiece = blockIndex === piece.length - 1;
+
+          let length = TorrentParser.blockLength;
+          if (isLastPiece && isLastBlockInPiece) {
+            length = TorrentParser.getBlockLength(
+              this.torrent,
+              pieceIndex,
+              blockIndex
+            );
+          }
+
           blocks.push({
             index: pieceIndex,
             begin: blockIndex * TorrentParser.blockLength,
-            length: TorrentParser.blockLength,
+            length,
           });
         }
       });
@@ -184,7 +131,6 @@ class Pieces {
     return blocks;
   }
 
-  // pieces.ts
   getTotalPieces(): number {
     return this.received.length;
   }

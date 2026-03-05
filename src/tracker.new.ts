@@ -18,17 +18,9 @@ abstract class Tracker {
   protected torrent: TorrentInterface;
   protected url: string;
 
-  constructor(torrent: TorrentInterface) {
+  constructor(torrent: TorrentInterface, url: string) {
     this.torrent = torrent;
-
-    if (
-      this.torrent['announce-list'] &&
-      this.torrent['announce-list'].length > 0
-    ) {
-      this.url = this.torrent['announce-list'][0][0];
-    } else {
-      this.url = this.torrent.announce;
-    }
+    this.url = url;
   }
 
   // Follows the BitTorrent specification for sending requests to the tracker
@@ -192,12 +184,24 @@ class UdpTracker extends Tracker {
     }
   ) {
     const url = new URL(rawUrl);
+    const port = url.port ? Number(url.port) : 6881;
+
+    // Set a timeout for the UDP response
+    const timeout = setTimeout(() => {
+      try {
+        socket.close();
+      } catch (e) {
+        // Already closed
+      }
+    }, 10000);
+
+    socket.on('close', () => clearTimeout(timeout));
 
     socket.send(
       message,
       0,
       message.length,
-      Number(url.port),
+      port,
       url.hostname as string,
       callback
     );
@@ -249,14 +253,13 @@ class HttpTracker extends Tracker {
 
       callback(peers);
     } catch (error) {
-      logger.error(`HTTP tracker error: ${(error as Error).message}`);
+      logger.error(`HTTP tracker error (${url}): ${(error as Error).message}`);
     }
   }
 
   private parseHttpAnnounceResponse(response: Uint8Array): PeerInterface[] {
     let rawPeers: Uint8Array = new Uint8Array();
 
-    // Sometimes the format in which the peers are returned is different so we need to check
     try {
       const decodedResponse: HttpTrackerResponseInterface =
         BencodeDecoder.decode(response) as HttpTrackerResponseInterface;
@@ -266,7 +269,6 @@ class HttpTracker extends Tracker {
       logger.error(
         `Error decoding HTTP tracker response: ${(error as Error).message}`
       );
-
       rawPeers = response;
     }
 
@@ -296,25 +298,56 @@ class HttpTracker extends Tracker {
   }
 }
 
+class MultiTracker extends Tracker {
+  private trackers: Tracker[];
+
+  constructor(torrent: TorrentInterface, urls: string[]) {
+    super(torrent, urls[0] || '');
+    this.trackers = urls.map(url => {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.protocol === 'udp:') {
+        return new UdpTracker(torrent, url);
+      }
+      return new HttpTracker(torrent, url);
+    });
+  }
+
+  getPeers(callback: (peers: PeerInterface[]) => void) {
+    this.trackers.forEach(tracker => {
+      tracker.getPeers(callback);
+    });
+  }
+}
+
 class TrackerBuilder {
   private constructor() {}
 
   static buildTracker(torrent: TorrentInterface): Tracker {
-    const url = torrent.announce;
-    const parsedUrl = new URL(url);
-
-    switch (parsedUrl.protocol) {
-      case 'udp:': {
-        return new UdpTracker(torrent);
-      }
-
-      case 'http:':
-      case 'https:': {
-        return new HttpTracker(torrent);
-      }
+    const urls = new Set<string>();
+    if (torrent.announce) {
+      urls.add(torrent.announce);
     }
 
-    throw new Error(`Unsupported tracker protocol: ${parsedUrl.protocol}`);
+    if (torrent['announce-list']) {
+      torrent['announce-list'].forEach(list => {
+        list.forEach(url => urls.add(url));
+      });
+    }
+
+    const uniqueUrls = Array.from(urls).filter(url => {
+      try {
+        new URL(url);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
+
+    if (uniqueUrls.length === 0) {
+      throw new Error('No valid tracker URLs found in torrent file');
+    }
+
+    return new MultiTracker(torrent, uniqueUrls);
   }
 }
 
