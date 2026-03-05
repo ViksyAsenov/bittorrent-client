@@ -10,70 +10,79 @@ import generatePeerId from './utils/generatePeerId';
 class MessageHandler {
   private constructor() {}
 
-private static error(size: number, id: number, msg: string) {
-  return { size, id, payload: null, error: msg };
-}
-
-static parseMessage(message: Buffer) {
-  if (message.length < 4) {
-    return this.error(0, -1, 'Message too short');
+  private static error(size: number, id: number, msg: string) {
+    return {size, id, payload: null, error: msg};
   }
 
-  const size = message.readInt32BE(0);
-
-  if (size === 0) {
-    return { size, id: null, payload: null };
-  }
-
-  if (message.length < 5) {
-    return this.error(size, -1, 'Missing message ID');
-  }
-
-  const id = message.readInt8(4);
-  const payload = message.length > 5 ? message.slice(5) : null;
-
-  switch (id) {
-    case 4:
-      if (!payload || payload.length < 4)
-        return this.error(size, id, 'Malformed Have: payload too short');
-      break;
-
-    case 5:
-      if (!payload)
-        return this.error(size, id, 'Malformed Bitfield: missing payload');
-      break;
-
-    case 6:
-    case 7:
-    case 8: {
-      if (!payload || payload.length < 8)
-        return this.error(size, id, 'Malformed payload: too short');
-
-      const parsedPayload: MessagePayloadInterface = {
-        index: payload.readInt32BE(0),
-        begin: payload.readInt32BE(4),
-      };
-      const rest = payload.slice(8);
-
-      if (id === 7) {
-        parsedPayload.block = rest;
-      } else {
-        if (rest.length < 4)
-          return this.error(size, id, 'Malformed Request/Cancel: missing length');
-        parsedPayload.length = rest.readInt32BE(0);
-      }
-
-      return { size, id, payload: parsedPayload };
+  static parseMessage(message: Buffer): {
+    size: number;
+    id: number | null;
+    payload: MessagePayloadInterface | Buffer | null;
+    error?: string;
+  } {
+    if (message.length < 4) {
+      return this.error(0, -1, 'Message too short');
     }
 
-    case 9:
-      if (!payload || payload.length < 2)
-        return this.error(size, id, 'Malformed Port: payload too short');
-      break;
-  }
+    const size = message.readInt32BE(0);
 
-  return { size, id, payload };
-}
+    if (size === 0) {
+      return {size, id: null, payload: null};
+    }
+
+    if (message.length < 5) {
+      return this.error(size, -1, 'Missing message ID');
+    }
+
+    const id = message.readInt8(4);
+    const payload = message.length > 5 ? message.slice(5) : null;
+
+    switch (id) {
+      case 4:
+        if (!payload || payload.length < 4)
+          return this.error(size, id, 'Malformed Have: payload too short');
+        break;
+
+      case 5:
+        if (!payload)
+          return this.error(size, id, 'Malformed Bitfield: missing payload');
+        break;
+
+      case 6:
+      case 7:
+      case 8: {
+        if (!payload || payload.length < 8)
+          return this.error(size, id, 'Malformed payload: too short');
+
+        const parsedPayload: MessagePayloadInterface = {
+          index: payload.readInt32BE(0),
+          begin: payload.readInt32BE(4),
+        };
+        const rest = payload.slice(8);
+
+        if (id === 7) {
+          parsedPayload.block = rest;
+        } else {
+          if (rest.length < 4)
+            return this.error(
+              size,
+              id,
+              'Malformed Request/Cancel: missing length'
+            );
+          parsedPayload.length = rest.readInt32BE(0);
+        }
+
+        return {size, id, payload: parsedPayload};
+      }
+
+      case 9:
+        if (!payload || payload.length < 2)
+          return this.error(size, id, 'Malformed Port: payload too short');
+        break;
+    }
+
+    return {size, id, payload};
+  }
 
   // Follows https://wiki.theory.org/BitTorrentSpecification#Handshake
   static buildHandshake(torrent: TorrentInterface) {

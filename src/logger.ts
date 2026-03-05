@@ -23,6 +23,7 @@ class Logger {
     this.downloadedBytes = 0;
     this.lastDownloadedBytes = 0;
     this.speedSamples = [];
+
     console.log('\n');
   }
 
@@ -69,6 +70,9 @@ class Logger {
     const speed = this.getAverageSpeed();
     const speedText = this.formatBytes(speed) + '/s';
 
+    const totalDigits = String(this.totalSize).length;
+    const remainingText = `${String(this.totalSize - this.downloadedBytes).padStart(totalDigits)} bytes left`;
+
     let etaText = 'ETA: --';
     if (speed > 0) {
       const remainingBytes = this.totalSize - this.downloadedBytes;
@@ -83,7 +87,7 @@ class Logger {
 
     this.clearLine();
     process.stdout.write(
-      `\r${bar}  ${percent.toFixed(1)}%  │  ${speedText.padStart(10)}  │  ${etaText}  │  ${peerInfo}`
+      `\r${bar}  ${percent.toFixed(2)}%  │  ${remainingText}  │  ${speedText.padStart(10)}  │  ${etaText}  │  ${peerInfo}`
     );
   }
 
