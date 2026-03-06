@@ -126,6 +126,8 @@ class Downloader {
     }, 10 * 1000);
 
     this.onWholeMessage(socket, (message: Buffer) => {
+      if (socket.destroyed) return;
+
       if (MessageHandler.isHandshake(message, this.torrent)) {
         socket.write(MessageHandler.buildInterested());
 
@@ -203,22 +205,42 @@ class Downloader {
   }
 
   private onWholeMessage(socket: Socket, callback: (buffer: Buffer) => void) {
-    let savedBuffer = Buffer.alloc(0);
+    const chunks: Buffer[] = [];
+    let totalLength = 0;
     let handshake = true;
 
     socket.on('data', (message: Buffer) => {
-      const getMessageLength = () =>
-        handshake
+      chunks.push(message);
+      totalLength += message.length;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (handshake && totalLength < 1) break;
+        if (!handshake && totalLength < 4) break;
+
+        const savedBuffer = Buffer.concat(chunks);
+        chunks.length = 0;
+        chunks.push(savedBuffer);
+
+        const messageLength = handshake
           ? savedBuffer.readUInt8(0) + 49
           : savedBuffer.readInt32BE(0) + 4;
-      savedBuffer = Buffer.concat([savedBuffer, message]);
 
-      while (
-        savedBuffer.length >= 4 &&
-        savedBuffer.length >= getMessageLength()
-      ) {
-        callback(savedBuffer.slice(0, getMessageLength()));
-        savedBuffer = savedBuffer.slice(getMessageLength());
+        if (!handshake && messageLength === 4) {
+          chunks.length = 0;
+          chunks.push(savedBuffer.slice(4));
+          totalLength -= 4;
+          continue;
+        }
+
+        if (totalLength < messageLength) break;
+
+        callback(savedBuffer.slice(0, messageLength));
+
+        chunks.length = 0;
+        chunks.push(savedBuffer.slice(messageLength));
+        totalLength -= messageLength;
+
         handshake = false;
       }
     });
