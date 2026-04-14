@@ -3,8 +3,8 @@ import BencodeDecoder from './decoder';
 import TorrentInterface from './types/Torrent';
 import BencodeEncoder from './encoder';
 import crypto from 'crypto';
-import {MultipleFileInfoInterface, SingleFileInfoInterface} from './types/Info';
 import bignum from 'bignum';
+import isMultiFileInfo from './utils/isMultiFileInfo';
 
 class TorrentParser {
   static blockLength = Math.pow(2, 14);
@@ -16,11 +16,9 @@ class TorrentParser {
   }
 
   static getSizeToBuffer(torrent: TorrentInterface): Buffer {
-    const size = (torrent.info as MultipleFileInfoInterface).files
-      ? (torrent.info as MultipleFileInfoInterface).files
-          .map(file => file.length)
-          .reduce((a, b) => a + b)
-      : (torrent.info as SingleFileInfoInterface).length;
+    const size = isMultiFileInfo(torrent.info)
+      ? torrent.info.files.map(file => file.length).reduce((a, b) => a + b)
+      : torrent.info.length;
 
     return bignum.toBuffer(size, {size: 8, endian: 'big'});
   }
@@ -43,9 +41,10 @@ class TorrentParser {
     const lastPieceLength = totalLength % pieceLength;
     const lastPieceIndex = Math.floor(totalLength / pieceLength);
 
-    // If totalLength is exactly divisible by pieceLength, every piece is full-size
-    if (lastPieceLength === 0) return pieceLength;
-    
+    if (lastPieceLength === 0) {
+      return pieceLength;
+    }
+
     return lastPieceIndex === pieceIndex ? lastPieceLength : pieceLength;
   }
 
@@ -65,7 +64,6 @@ class TorrentParser {
     const lastBlockLength = pieceLength % this.blockLength;
     const lastBlockIndex = Math.ceil(pieceLength / this.blockLength) - 1;
 
-    // If pieceLength is exactly divisible by blockLength, every block is full-size
     if (lastBlockLength === 0) {
       return this.blockLength;
     }

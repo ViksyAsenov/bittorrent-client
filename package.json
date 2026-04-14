@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "A terminal based BitTorrent client",
   "main": "src/index.ts",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "lint": "gts lint",
-    "compile": "tsc",
+    "type-check": "tsc --noEmit",
     "download": "ts-node src/index.ts",
     "fix": "eslint --fix '**/*.ts'",
     "test": "jest"
@@ -18,7 +21,7 @@
   "license": "ISC",
   "devDependencies": {
     "@types/bignum": "^0.0.33",
-    "@types/jest": "^29.5.12",
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.18.1",
     "gts": "^5.3.1",
     "jest": "^29.7.0",

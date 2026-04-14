@@ -1,3 +1,5 @@
+import formatBytes from './utils/formatBytes';
+
 class Logger {
   private totalSize: number;
   private downloadedBytes: number;
@@ -52,7 +54,9 @@ class Logger {
 
   private getAverageSpeed(): number {
     if (this.speedSamples.length === 0) return 0;
+
     const sum = this.speedSamples.reduce((a, b) => a + b, 0);
+
     return sum / this.speedSamples.length;
   }
 
@@ -68,7 +72,7 @@ class Logger {
     const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
 
     const speed = this.getAverageSpeed();
-    const speedText = this.formatBytes(speed) + '/s';
+    const speedText = formatBytes(speed) + '/s';
 
     const totalDigits = String(this.totalSize).length;
     const remainingText = `${String(this.totalSize - this.downloadedBytes).padStart(totalDigits)} bytes left`;
@@ -86,19 +90,10 @@ class Logger {
     const peerInfo = droppedText ? `${peerText}  │  ${droppedText}` : peerText;
 
     this.clearLine();
+
     process.stdout.write(
       `\r${bar}  ${percent.toFixed(2)}%  │  ${remainingText}  │  ${speedText.padStart(10)}  │  ${etaText}  │  ${peerInfo}`
     );
-  }
-
-  private formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
   private formatTime(seconds: number): string {
@@ -162,7 +157,7 @@ class Logger {
       `Download complete in ${this.formatTime(Math.floor(totalTime))}!`
     );
 
-    this.info(`Average speed: ${this.formatBytes(avgSpeed)}/s`);
+    this.info(`Average speed: ${formatBytes(avgSpeed)}/s`);
   }
 
   private clearLine() {

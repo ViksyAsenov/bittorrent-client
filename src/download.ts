@@ -13,6 +13,7 @@ import logger from './logger';
 import TorrentParser from './torrentParser';
 
 const MAX_PIPELINE = 50;
+const ENDGAME_PIPELINE = 5;
 
 class Downloader {
   private pieces: Pieces;
@@ -21,20 +22,30 @@ class Downloader {
   private path: string;
   private files: {path: string; length: number; offset: number; fd: number}[] =
     [];
+  private selectedFileIndices: Set<number> | undefined;
   private tracker: {
     getPeers: (callback: (peers: PeerInterface[]) => void) => void;
   } | null = null;
   private reannounceTimer: ReturnType<typeof setInterval> | null = null;
+  private staleTimer: ReturnType<typeof setInterval> | null = null;
   private knownPeerKeys: Set<string> = new Set();
   private pendingWrites = 0;
   private completed = false;
   private disconnectedPeers = 0;
 
-  constructor(torrent: TorrentInterface, path: string) {
-    this.pieces = new Pieces(torrent);
+  constructor(
+    torrent: TorrentInterface,
+    path: string,
+    selectedFileIndices?: number[]
+  ) {
+    this.selectedFileIndices = selectedFileIndices
+      ? new Set(selectedFileIndices)
+      : undefined;
+    this.pieces = new Pieces(torrent, this.selectedFileIndices);
     this.torrent = torrent;
     this.peers = [];
     this.path = path;
+
     this.setupFiles();
   }
 
@@ -48,15 +59,20 @@ class Downloader {
     if (isMultiFileInfo(info)) {
       let offset = 0;
 
-      for (const file of info.files) {
+      info.files.forEach((file, i) => {
         const filePath = path.join(this.path, ...file.path);
-        fs.mkdirSync(path.dirname(filePath), {recursive: true});
+        const selected =
+          !this.selectedFileIndices || this.selectedFileIndices.has(i);
 
-        const fd = fs.openSync(filePath, 'w');
+        let fd = -1;
+        if (selected) {
+          fs.mkdirSync(path.dirname(filePath), {recursive: true});
+          fd = fs.openSync(filePath, 'w');
+        }
+
         this.files.push({path: filePath, length: file.length, offset, fd});
-
         offset += file.length;
-      }
+      });
     } else {
       const filePath = this.path;
       const fd = fs.openSync(filePath, 'w');
@@ -68,7 +84,12 @@ class Downloader {
   download() {
     this.tracker = TrackerBuilder.buildTracker(this.torrent);
 
-    const totalSize = TorrentParser.getSizeToNumber(this.torrent);
+    const totalSize = this.selectedFileIndices
+      ? this.files
+          .filter((_, i) => this.selectedFileIndices!.has(i))
+          .reduce((sum, f) => sum + f.length, 0)
+      : TorrentParser.getSizeToNumber(this.torrent);
+
     logger.startDownload(totalSize);
 
     this.tracker.getPeers((peers: PeerInterface[]) => {
@@ -80,6 +101,13 @@ class Downloader {
         this.reannounce();
       }
     }, 30 * 1000);
+
+    // this.staleTimer = setInterval(() => {
+    //   if (!this.pieces.isDone()) {
+    //     this.pieces.resetRequested();
+    //     this.peers.forEach(p => this.requestPiece(p));
+    //   }
+    // }, 10 * 1000);
   }
 
   private reannounce() {
@@ -92,6 +120,7 @@ class Downloader {
     this.tracker.getPeers((peers: PeerInterface[]) => {
       for (const peer of peers) {
         const key = `${peer.ip}:${peer.port}`;
+
         if (!this.knownPeerKeys.has(key)) {
           this.knownPeerKeys.add(key);
           this.connectToPeerAndDownload(peer);
@@ -109,6 +138,7 @@ class Downloader {
     });
 
     const queue = new Queue(this.torrent);
+
     const peerState = {socket, queue, pending: 0};
     this.peers.push(peerState);
 
@@ -118,66 +148,74 @@ class Downloader {
       socket.write(MessageHandler.buildKeepAlive());
     }, 30 * 1000);
 
-    const staleTimer = setInterval(() => {
-      if (!this.pieces.isDone()) {
-        this.pieces.resetRequested();
-        this.peers.forEach(p => this.requestPiece(p));
-      }
-    }, 10 * 1000);
-
     this.onWholeMessage(socket, (message: Buffer) => {
-      if (socket.destroyed) return;
+      try {
+        if (socket.destroyed) return;
 
-      if (MessageHandler.isHandshake(message, this.torrent)) {
-        socket.write(MessageHandler.buildInterested());
+        if (MessageHandler.isHandshake(message, this.torrent)) {
+          socket.write(MessageHandler.buildInterested());
 
-        const bitfield = this.pieces.getBitfield();
-        if (bitfield.length > 0) {
-          socket.write(MessageHandler.buildBitfield(bitfield));
+          // Send BEP 10 extension handshake if peer supports it
+          if (MessageHandler.peerSupportsExtension(message)) {
+            socket.write(MessageHandler.buildExtensionHandshake());
+          }
+
+          const bitfield = this.pieces.getBitfield();
+          if (bitfield.length > 0) {
+            socket.write(MessageHandler.buildBitfield(bitfield));
+          }
+        } else {
+          const parsedMessage = MessageHandler.parseMessage(message);
+
+          if ('error' in parsedMessage) {
+            logger.error(`Protocol error from peer: ${parsedMessage.error}`);
+            socket.destroy();
+            return;
+          }
+
+          switch (parsedMessage.id) {
+            case 0:
+              this.handleChoke(peerState);
+              break;
+            case 1:
+              this.handleUnchoke(peerState);
+              break;
+            case 4:
+              this.handleHave(parsedMessage.payload as Buffer, peerState);
+              break;
+            case 5:
+              this.handleBitfield(parsedMessage.payload as Buffer, peerState);
+              break;
+            case 6:
+              this.handleRequest(
+                parsedMessage.payload as MessagePayloadInterface,
+                socket
+              );
+              break;
+            case 7:
+              this.handlePiece(
+                parsedMessage.payload as MessagePayloadInterface,
+                peerState
+              );
+              break;
+            case 20:
+              // BEP 10 extension message — handled gracefully, no action needed during download
+              break;
+          }
         }
-      } else {
-        const parsedMessage = MessageHandler.parseMessage(message);
+      } catch (error) {
+        logger.error(
+          `Critical error processing message: ${error instanceof Error ? error.message : String(error)}`
+        );
 
-        if ('error' in parsedMessage) {
-          logger.error(`Protocol error from peer: ${parsedMessage.error}`);
-          socket.destroy();
-          return;
-        }
-
-        switch (parsedMessage.id) {
-          case 0:
-            this.handleChoke(peerState);
-            break;
-          case 1:
-            this.handleUnchoke(peerState);
-            break;
-          case 4:
-            this.handleHave(parsedMessage.payload as Buffer, peerState);
-            break;
-          case 5:
-            this.handleBitfield(parsedMessage.payload as Buffer, peerState);
-            break;
-          case 6:
-            this.handleRequest(
-              parsedMessage.payload as MessagePayloadInterface,
-              socket
-            );
-            break;
-          case 7:
-            this.handlePiece(
-              parsedMessage.payload as MessagePayloadInterface,
-              peerState
-            );
-
-            break;
-        }
+        socket.destroy();
       }
     });
 
-    socket.on('error', () => {
-      // logger.error(
-      //   `TCP connection error: ${error.message} - ${this.peers.length} peers connected`
-      // );
+    socket.on('error', (error: Error) => {
+      logger.error(
+        `TCP connection error: ${error.message} - ${this.peers.length} peers connected`
+      );
     });
 
     let cleaned = false;
@@ -186,13 +224,13 @@ class Downloader {
       cleaned = true;
 
       clearInterval(keepAliveInterval);
-      clearInterval(staleTimer);
 
       this.peers = this.peers.filter(p => p !== peerState);
       this.disconnectedPeers++;
 
       logger.setPeerCounts(this.peers.length, this.disconnectedPeers);
 
+      this.pieces.removePeerBitfield(peerState.queue.peerBitfield);
       this.pieces.resetRequested();
 
       if (!this.pieces.isDone() && this.peers.length === 0) {
@@ -252,6 +290,7 @@ class Downloader {
 
   private handleUnchoke(peer: {socket: Socket; queue: Queue; pending: number}) {
     peer.queue.chocked = false;
+
     this.requestPiece(peer);
   }
 
@@ -261,10 +300,15 @@ class Downloader {
   ) {
     if (!payload || payload.length < 4) {
       logger.error('Malformed HAVE message received');
+
       return;
     }
+
     const pieceIndex = payload.readUInt32BE(0);
-    peer.queue.add(pieceIndex);
+
+    peer.queue.addPiece(pieceIndex);
+
+    this.pieces.addPeerHave(pieceIndex);
     this.requestPiece(peer);
   }
 
@@ -274,6 +318,7 @@ class Downloader {
   ) {
     if (!payload) {
       logger.error('Malformed BITFIELD message received');
+
       return;
     }
 
@@ -282,14 +327,17 @@ class Downloader {
       for (let j = 0; j < 8; j++) {
         if (byte % 2) {
           const pieceIndex = i * 8 + 7 - j;
+
           if (pieceIndex < totalPieces) {
-            peer.queue.add(pieceIndex);
+            peer.queue.addPiece(pieceIndex);
           }
         }
+
         byte = Math.floor(byte / 2);
       }
     });
 
+    this.pieces.addPeerBitfield(payload);
     this.requestPiece(peer);
   }
 
@@ -303,8 +351,10 @@ class Downloader {
     this.readFromFiles(offset, pieceLength, pieceBuffer, (error, buffer) => {
       if (error) {
         logger.error(`Error reading file(s): ${error.message}`);
+
         return;
       }
+
       const pieceMessage = MessageHandler.buildPiece({
         index: pieceIndex,
         begin: pieceBegin,
@@ -335,13 +385,25 @@ class Downloader {
     }
 
     let fileOffset = offset - this.files[fileIdx].offset;
+
     const readNext = () => {
       if (remaining <= 0 || fileIdx >= this.files.length) {
         callback(null, buffer);
+
         return;
       }
+
       const file = this.files[fileIdx];
       const toRead = Math.min(remaining, file.length - fileOffset);
+
+      if (file.fd === -1) {
+        // File not selected — cannot serve this piece
+        return callback(
+          new Error('Piece data not available: file not selected'),
+          buffer
+        );
+      }
+
       fs.read(
         file.fd,
         buffer,
@@ -360,6 +422,7 @@ class Downloader {
         }
       );
     };
+
     readNext();
   }
 
@@ -371,6 +434,7 @@ class Downloader {
 
     if (this.pieces.isReceived(payload)) {
       this.requestPiece(peer);
+
       return;
     }
 
@@ -386,13 +450,23 @@ class Downloader {
     const offset =
       payload.index * this.torrent.info['piece length'] + payload.begin;
 
-    const haveMessage = MessageHandler.buildHave(payload.index);
-    this.peers.forEach(p => {
-      if (p.socket.writable) {
-        p.socket.write(haveMessage);
-      }
+    // Only broadcast HAVE when the full piece is received
+    if (this.pieces.isPieceComplete(payload.index)) {
+      const haveMessage = MessageHandler.buildHave(payload.index);
+
+      this.peers.forEach(p => {
+        if (p.socket.writable) {
+          p.socket.write(haveMessage);
+        }
+      });
+    }
+
+    const cancelMessage = MessageHandler.buildCancel({
+      index: payload.index,
+      begin: payload.begin,
+      length: (payload.block as Buffer).length,
     });
-    const cancelMessage = MessageHandler.buildCancel(payload);
+
     this.peers.forEach(p => {
       if (p !== peer && p.socket.writable) {
         p.socket.write(cancelMessage);
@@ -414,6 +488,7 @@ class Downloader {
 
     if (this.pieces.isEndGame()) {
       this.peers.forEach(p => this.requestPiece(p));
+
       return;
     }
 
@@ -422,6 +497,7 @@ class Downloader {
 
   private onComplete() {
     if (this.completed) return;
+
     this.completed = true;
 
     try {
@@ -430,10 +506,17 @@ class Downloader {
         this.reannounceTimer = null;
       }
 
+      if (this.staleTimer) {
+        clearInterval(this.staleTimer);
+        this.staleTimer = null;
+      }
+
       this.peers.forEach(p => p.socket.destroy());
       this.peers = [];
 
       this.files.forEach(f => {
+        if (f.fd === -1) return;
+
         try {
           fs.closeSync(f.fd);
         } catch (e) {
@@ -461,6 +544,7 @@ class Downloader {
 
     if (fileIdx === -1) {
       logger.error(`Invalid offset for writing: ${offset}`);
+
       return callback();
     }
 
@@ -472,14 +556,29 @@ class Downloader {
 
       const file = this.files[fileIdx];
       const toWrite = Math.min(remaining, file.length - fileOffset);
-      fs.write(file.fd, data, bufOffset, toWrite, fileOffset, error => {
-        if (error) {
-          logger.error(`Error writing to file: ${error.message}`);
-        }
+
+      if (file.fd === -1) {
+        // File not selected — skip write but advance cursor
         remaining -= toWrite;
         bufOffset += toWrite;
         fileIdx++;
         fileOffset = 0;
+
+        writeNext();
+
+        return;
+      }
+
+      fs.write(file.fd, data, bufOffset, toWrite, fileOffset, error => {
+        if (error) {
+          logger.error(`Error writing to file: ${error.message}`);
+        }
+
+        remaining -= toWrite;
+        bufOffset += toWrite;
+        fileIdx++;
+        fileOffset = 0;
+
         writeNext();
       });
     };
@@ -489,22 +588,62 @@ class Downloader {
 
   private requestPiece(peer: {socket: Socket; queue: Queue; pending: number}) {
     if (peer.queue.chocked) return;
+    if (this.pieces.isDone()) return;
 
-    if (peer.queue.length() === 0 && !this.pieces.isDone()) {
+    // In endgame mode, fall back to requesting all missing blocks
+    if (this.pieces.isEndGame()) {
+      // Rebuild queue with freshly shuffled missing blocks each time
+      while (peer.queue.length() > 0) peer.queue.poll();
+
       const missingBlocks = this.pieces.getMissingBlocks();
-
       for (const block of missingBlocks) {
         peer.queue.enqueue(block);
       }
+
+      while (peer.pending < ENDGAME_PIPELINE && peer.queue.length() > 0) {
+        const pieceBlock = peer.queue.poll() as MessagePayloadInterface;
+
+        if (this.pieces.needed(pieceBlock) && peer.socket.writable) {
+          peer.socket.write(MessageHandler.buildRequest(pieceBlock));
+
+          this.pieces.addRequested(pieceBlock);
+
+          peer.pending++;
+        }
+      }
+      return;
     }
 
-    while (peer.pending < MAX_PIPELINE && peer.queue.length() > 0) {
-      const pieceBlock = peer.queue.poll() as MessagePayloadInterface;
+    const rarestPieces = this.pieces.getRarestPieces(peer.queue.peerBitfield);
 
-      if (this.pieces.needed(pieceBlock) && peer.socket.writable) {
-        peer.socket.write(MessageHandler.buildRequest(pieceBlock));
-        this.pieces.addRequested(pieceBlock);
-        peer.pending++;
+    for (const pieceIndex of rarestPieces) {
+      if (peer.pending >= MAX_PIPELINE) break;
+
+      const numberOfBlocks = TorrentParser.getBlocksPerPiece(
+        this.torrent,
+        pieceIndex
+      );
+
+      for (let blockIndex = 0; blockIndex < numberOfBlocks; blockIndex++) {
+        if (peer.pending >= MAX_PIPELINE) break;
+
+        const pieceBlock: MessagePayloadInterface = {
+          index: pieceIndex,
+          begin: blockIndex * TorrentParser.blockLength,
+          length: TorrentParser.getBlockLength(
+            this.torrent,
+            pieceIndex,
+            blockIndex
+          ),
+        };
+
+        if (this.pieces.needed(pieceBlock) && peer.socket.writable) {
+          peer.socket.write(MessageHandler.buildRequest(pieceBlock));
+
+          this.pieces.addRequested(pieceBlock);
+
+          peer.pending++;
+        }
       }
     }
   }

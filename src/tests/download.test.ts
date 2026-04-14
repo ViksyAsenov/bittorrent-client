@@ -306,4 +306,66 @@ describe('Download reannounce on peer disconnect', () => {
       );
     }, 20000);
   }, 25000);
+
+  test('continues download after a protocol error from one peer', done => {
+    const contentSize = 65536;
+    const pieceLength = 16384;
+    const content = crypto.randomBytes(contentSize);
+    const torrent = buildSyntheticTorrent(content, pieceLength);
+    const outputPath = path.join(OUTPUT_DIR, 'protocol_error_test.bin');
+
+    let safetyTimeout: ReturnType<typeof setTimeout>;
+    let server1: net.Server;
+    let server2: net.Server;
+
+    process.exit = jest.fn((() => {
+      clearTimeout(safetyTimeout);
+      const downloaded = fs.readFileSync(outputPath);
+      expect(downloaded.length).toBe(content.length);
+      server1.close();
+      server2.close();
+      done();
+    }) as never);
+
+    // Peer 1: Sends a malformed message (protocol error)
+    server1 = net.createServer(socket => {
+      socket.on('error', () => {}); // Handle ECONNRESET
+      socket.on('data', () => {
+        if (socket.writable) {
+          // Just send a malformed message to trigger the error
+          const malformedMessage = Buffer.alloc(5);
+          malformedMessage.writeInt32BE(1, 0);
+          malformedMessage.writeInt8(99, 4); // Unknown ID
+          socket.write(malformedMessage);
+        }
+        // Then close
+        setTimeout(() => socket.destroy(), 100);
+      });
+    });
+    server1.listen(0, '127.0.0.1', () => {
+      const port1 = (server1.address() as net.AddressInfo).port;
+      // Peer 2: Normal peer
+      server2 = startMockPeer(content, torrent, port2 => {
+        TrackerBuilder.buildTracker = jest.fn().mockReturnValue({
+          getPeers: (
+            callback: (peers: {ip: string; port: number}[]) => void
+          ) => {
+            callback([
+              {ip: '127.0.0.1', port: port1},
+              {ip: '127.0.0.1', port: port2},
+            ]);
+          },
+        });
+
+        const downloader = new Downloader(torrent, outputPath);
+        downloader.download();
+      });
+    });
+
+    safetyTimeout = setTimeout(() => {
+      server1.close();
+      server2.close();
+      done(new Error('Test timed out — download froze after protocol error'));
+    }, 20000);
+  }, 25000);
 });

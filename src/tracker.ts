@@ -14,73 +14,142 @@ import {arr2text} from './utils/uint8';
 import BencodeDecoder from './decoder';
 import logger from './logger';
 
-abstract class Tracker {
-  protected torrent: TorrentInterface;
-  protected url: string;
+const UDP_TIMEOUT_MS = 5000;
+
+class Tracker {
+  private torrent: TorrentInterface;
+  private announces: string[][];
+  private infoHashHex: string;
+  private totalSize: number;
 
   constructor(torrent: TorrentInterface) {
     this.torrent = torrent;
+    this.infoHashHex = torrent.infoHash || TorrentParser.getInfoHash(torrent);
+    this.totalSize = this.computeSize();
 
     if (
       this.torrent['announce-list'] &&
       this.torrent['announce-list'].length > 0
     ) {
-      this.url = this.torrent['announce-list'][0][0];
+      this.announces = this.torrent['announce-list'].map(tier => [...tier]);
+    } else if (this.torrent.announce) {
+      this.announces = [[this.torrent.announce]];
     } else {
-      this.url = this.torrent.announce;
+      this.announces = [];
     }
   }
 
-  // Follows the BitTorrent specification for sending requests to the tracker
-  // https://wiki.theory.org/BitTorrentSpecification#Tracker_HTTP.2FHTTPS_Protocol
-  abstract getPeers(callback: (peers: PeerInterface[]) => void): void;
-}
-
-class UdpTracker extends Tracker {
-  getPeers(callback: (peers: PeerInterface[]) => void) {
-    this.udpGetPeers(this.url, callback);
+  private computeSize(): number {
+    try {
+      return TorrentParser.getSizeToNumber(this.torrent);
+    } catch {
+      return 0; // Magnet link before metadata is fetched
+    }
   }
 
-  private udpGetPeers(url: string, callback: (peers: PeerInterface[]) => void) {
-    const socket = dgram.createSocket('udp4');
+  // Follows the multitracker specification (BEP 12)
+  // Processes tiers sequentially, URLs within each tier in order.
+  // On success, the working URL is promoted to the front of its tier.
+  getPeers(callback: (peers: PeerInterface[]) => void): void {
+    this.tryGetPeers().then(peers => callback(peers));
+  }
 
-    // 1. Send connection request
-    const connectionRequest = this.buildUdpConnectionRequest();
-    this.udpSend(socket, connectionRequest, url);
+  private async tryGetPeers(): Promise<PeerInterface[]> {
+    for (let tierIndex = 0; tierIndex < this.announces.length; tierIndex++) {
+      const tier = this.announces[tierIndex];
 
-    socket.on('message', response => {
-      const responseType = this.getUdpResponseType(response);
-      switch (responseType) {
-        case 'connect': {
-          // 2. Receive and parse connection response
-          const connectionResponse = this.parseUdpConnectionResponse(response);
+      for (let urlIndex = 0; urlIndex < tier.length; urlIndex++) {
+        const url = tier[urlIndex];
 
-          // 3. Send announce request
-          const announceRequest = this.buildUdpAnnounceRequest(
-            connectionResponse.connectionId
-          );
-          this.udpSend(socket, announceRequest, url);
-          break;
-        }
-        case 'announce': {
-          // 4. Parse announce response
-          const announceResponse: UdpTrackerResponseInterface =
-            this.parseUdpAnnounceResponse(response);
+        try {
+          const parsedUrl = new URL(url);
+          let peers: PeerInterface[] = [];
 
-          // 5. Pass peers to callback
-          callback(announceResponse.peers);
-          socket.close();
-          break;
-        }
-        default: {
-          logger.error(`Unknown response type: ${responseType}`);
-          break;
+          switch (parsedUrl.protocol) {
+            case 'udp:':
+              peers = await this.udpGetPeers(url);
+              break;
+            case 'http:':
+            case 'https:':
+              peers = await this.httpGetPeers(url);
+              break;
+            default:
+              logger.error(
+                `Unsupported tracker protocol: ${parsedUrl.protocol}`
+              );
+
+              continue;
+          }
+
+          if (peers.length > 0) {
+            if (urlIndex > 0) {
+              tier.splice(urlIndex, 1);
+              tier.unshift(url);
+            }
+
+            return peers;
+          }
+        } catch (error) {
+          logger.error(`Tracker ${url} failed: ${(error as Error).message}`);
         }
       }
-    });
+    }
 
-    socket.on('error', (error: Error) => {
-      logger.error(`UDP tracker error: ${error.message}`);
+    return [];
+  }
+
+  private udpGetPeers(url: string): Promise<PeerInterface[]> {
+    return new Promise((resolve, reject) => {
+      const socket = dgram.createSocket('udp4');
+
+      const timeout = setTimeout(() => {
+        socket.close();
+        reject(new Error(`UDP tracker timed out: ${url}`));
+      }, UDP_TIMEOUT_MS);
+
+      // 1. Send connection request
+      const connectionRequest = this.buildUdpConnectionRequest();
+      this.udpSend(socket, connectionRequest, url);
+
+      socket.on('message', response => {
+        const responseType = this.getUdpResponseType(response);
+        switch (responseType) {
+          case 'connect': {
+            // 2. Receive and parse connection response
+            const connectionResponse =
+              this.parseUdpConnectionResponse(response);
+
+            // 3. Send announce request
+            const announceRequest = this.buildUdpAnnounceRequest(
+              connectionResponse.connectionId
+            );
+            this.udpSend(socket, announceRequest, url);
+            break;
+          }
+          case 'announce': {
+            // 4. Parse announce response
+            const announceResponse: UdpTrackerResponseInterface =
+              this.parseUdpAnnounceResponse(response);
+
+            clearTimeout(timeout);
+            socket.close();
+            resolve(announceResponse.peers);
+            break;
+          }
+          default: {
+            logger.error(`Unknown response type: ${responseType}`);
+            break;
+          }
+        }
+      });
+
+      socket.on('error', (error: Error) => {
+        clearTimeout(timeout);
+
+        socket.close();
+
+        reject(error);
+      });
     });
   }
 
@@ -121,10 +190,7 @@ class UdpTracker extends Tracker {
     crypto.randomBytes(4).copy(buffer, 12);
 
     // Info hash
-    Buffer.from(TorrentParser.getInfoHash(this.torrent), 'hex').copy(
-      buffer,
-      16
-    );
+    Buffer.from(this.infoHashHex, 'hex').copy(buffer, 16);
 
     // Peer id
     generatePeerId().copy(buffer, 36);
@@ -133,7 +199,11 @@ class UdpTracker extends Tracker {
     Buffer.alloc(8).copy(buffer, 56);
 
     // Left
-    TorrentParser.getSizeToBuffer(this.torrent).copy(buffer, 64);
+    const leftBuf = Buffer.alloc(8);
+    if (this.totalSize > 0) {
+      TorrentParser.getSizeToBuffer(this.torrent).copy(leftBuf, 0);
+    }
+    leftBuf.copy(buffer, 64);
 
     // Uploaded
     Buffer.alloc(8).copy(buffer, 72);
@@ -215,42 +285,28 @@ class UdpTracker extends Tracker {
 
     return 'unknown';
   }
-}
 
-class HttpTracker extends Tracker {
-  async getPeers(callback: (peers: PeerInterface[]) => void) {
-    await this.httpGetPeers(this.url, callback);
-  }
+  private async httpGetPeers(url: string): Promise<PeerInterface[]> {
+    const params: TrackerRequestInterface = {
+      peer_id: arr2text(generatePeerId()),
+      port: String(6887),
+      uploaded: String(0),
+      downloaded: String(0),
+      left: String(this.totalSize),
+      event: 'started',
+      compact: '1',
+    };
 
-  private async httpGetPeers(
-    url: string,
-    callback: (peers: PeerInterface[]) => void
-  ) {
-    try {
-      const params: TrackerRequestInterface = {
-        peer_id: arr2text(generatePeerId()),
-        port: String(6887),
-        uploaded: String(0),
-        downloaded: String(0),
-        left: String(TorrentParser.getSizeToNumber(this.torrent)),
-        event: 'started',
-        compact: '1',
-      };
+    const separator = url.includes('?') ? '&' : '?';
+    const fullUrl = `${url}${separator}info_hash=${this.encodeInfoHash(
+      this.infoHashHex
+    )}&${new URLSearchParams(params as unknown as Record<string, string>)}`;
 
-      const fullUrl = `${url}&info_hash=${this.encodeInfoHash(
-        TorrentParser.getInfoHash(this.torrent)
-      )}&${new URLSearchParams(params as unknown as Record<string, string>)}`;
+    const response = await fetch(fullUrl);
 
-      const response = await fetch(fullUrl);
+    const data = new Uint8Array(await response.arrayBuffer());
 
-      const data = new Uint8Array(await response.arrayBuffer());
-
-      const peers = this.parseHttpAnnounceResponse(data);
-
-      callback(peers);
-    } catch (error) {
-      logger.error(`HTTP tracker error: ${(error as Error).message}`);
-    }
+    return this.parseHttpAnnounceResponse(data);
   }
 
   private parseHttpAnnounceResponse(response: Uint8Array): PeerInterface[] {
@@ -277,7 +333,6 @@ class HttpTracker extends Tracker {
 
       const ip = ipBytes.join('.');
 
-      // Combine the two port bytes into a single 16-bit integer
       const port = (portBytes[0] << 8) | portBytes[1];
 
       peers.push({ip, port});
@@ -300,21 +355,23 @@ class TrackerBuilder {
   private constructor() {}
 
   static buildTracker(torrent: TorrentInterface): Tracker {
-    const url = torrent.announce;
-    const parsedUrl = new URL(url);
+    return new Tracker(torrent);
+  }
 
-    switch (parsedUrl.protocol) {
-      case 'udp:': {
-        return new UdpTracker(torrent);
-      }
+  static buildFromMagnet(infoHashHex: string, trackers: string[]): Tracker {
+    const minimalTorrent: TorrentInterface = {
+      info: {
+        name: 'unknown',
+        'piece length': 0,
+        pieces: Buffer.alloc(0),
+        length: 0,
+      },
+      infoHash: infoHashHex,
+      'announce-list': trackers.map(t => [t]),
+      announce: trackers[0],
+    };
 
-      case 'http:':
-      case 'https:': {
-        return new HttpTracker(torrent);
-      }
-    }
-
-    throw new Error(`Unsupported tracker protocol: ${parsedUrl.protocol}`);
+    return new Tracker(minimalTorrent);
   }
 }
 

@@ -4,6 +4,7 @@ import TorrentInterface from './types/Torrent';
 
 class Queue {
   public chocked: boolean;
+  public peerBitfield: boolean[];
   private queue: MessagePayloadInterface[];
   private torrent: TorrentInterface;
 
@@ -11,9 +12,15 @@ class Queue {
     this.chocked = true;
     this.queue = [];
     this.torrent = torrent;
+
+    const totalPieces = torrent.info.pieces.length / 20;
+
+    this.peerBitfield = new Array(totalPieces).fill(false);
   }
 
-  add(pieceIndex: number) {
+  addPiece(pieceIndex: number) {
+    this.peerBitfield[pieceIndex] = true;
+
     const numberOfBlocks = TorrentParser.getBlocksPerPiece(
       this.torrent,
       pieceIndex

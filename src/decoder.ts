@@ -85,21 +85,20 @@ class BencodeDecoder {
     }
   }
 
-  private static find(chr: number): number {
-    let i = this.position;
-    const c = this.data.length;
-    const d = this.data;
+  private static find(char: number): number {
+    let index = this.position;
 
-    while (i < c) {
-      if (d[i] === chr) return i;
-      i++;
+    while (index < this.data.length) {
+      if (this.data[index] === char) return index;
+
+      index++;
     }
 
     throw new Error(
       'Invalid data: Missing delimiter "' +
-        String.fromCharCode(chr) +
+        String.fromCharCode(char) +
         '" [0x' +
-        chr.toString(16) +
+        char.toString(16) +
         ']'
     );
   }
@@ -127,15 +126,15 @@ class BencodeDecoder {
   private static decodeList(): unknown[] {
     this.position++;
 
-    const lst: unknown[] = [];
+    const list: unknown[] = [];
 
     while (this.data[this.position] !== END_OF_TYPE) {
-      lst.push(this.next());
+      list.push(this.next());
     }
 
     this.position++;
 
-    return lst;
+    return list;
   }
 
   private static decodeInteger(): number {

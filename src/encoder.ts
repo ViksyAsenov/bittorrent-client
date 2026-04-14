@@ -5,17 +5,17 @@ import {concat, text2arr, getType} from './utils/uint8';
 // https://en.wikipedia.org/wiki/Bencode
 
 class BencodeEncoder {
-  private static _floatConversionDetected: boolean;
-  private static buffE = new Uint8Array([0x65]);
-  private static buffD = new Uint8Array([0x64]);
-  private static buffL = new Uint8Array([0x6c]);
+  private static floatConversionDetected: boolean;
+  private static bufferEnd = new Uint8Array([0x65]);
+  private static bufferDict = new Uint8Array([0x64]);
+  private static bufferList = new Uint8Array([0x6c]);
 
   public static encode(
     data: unknown,
     buffer?: Uint8Array,
     offset?: number
   ): Uint8Array {
-    this._floatConversionDetected = false;
+    this.floatConversionDetected = false;
     const buffers: Uint8Array[] = [];
     let result: Uint8Array | null = null;
 
@@ -24,6 +24,7 @@ class BencodeEncoder {
 
     if (ArrayBuffer.isView(buffer)) {
       buffer.set(result, offset);
+
       return buffer;
     }
 
@@ -91,8 +92,8 @@ class BencodeEncoder {
 
     buffers.push(text2arr('i' + val + 'e'));
 
-    if (val !== data && !this._floatConversionDetected) {
-      this._floatConversionDetected = true;
+    if (val !== data && !this.floatConversionDetected) {
+      this.floatConversionDetected = true;
     }
   }
 
@@ -100,7 +101,7 @@ class BencodeEncoder {
     buffers: Uint8Array[],
     data: Record<string, unknown>
   ): void {
-    buffers.push(this.buffD);
+    buffers.push(this.bufferDict);
 
     const keys = Object.keys(data).sort();
 
@@ -110,14 +111,14 @@ class BencodeEncoder {
       this._encode(buffers, data[key]);
     }
 
-    buffers.push(this.buffE);
+    buffers.push(this.bufferEnd);
   }
 
   private static encodeDictMap(
     buffers: Uint8Array[],
     data: Map<unknown, unknown>
   ): void {
-    buffers.push(this.buffD);
+    buffers.push(this.bufferDict);
 
     const keys = Array.from(data.keys()).sort();
 
@@ -129,32 +130,32 @@ class BencodeEncoder {
       this._encode(buffers, data.get(key));
     }
 
-    buffers.push(this.buffE);
+    buffers.push(this.bufferEnd);
   }
 
   private static encodeList(buffers: Uint8Array[], data: unknown[]): void {
-    buffers.push(this.buffL);
+    buffers.push(this.bufferList);
 
     for (const item of data) {
       if (item === null) continue;
       this._encode(buffers, item);
     }
 
-    buffers.push(this.buffE);
+    buffers.push(this.bufferEnd);
   }
 
   private static encodeListSet(
     buffers: Uint8Array[],
     data: Set<unknown>
   ): void {
-    buffers.push(this.buffL);
+    buffers.push(this.bufferList);
 
     for (const item of data) {
       if (item === null) continue;
       this._encode(buffers, item);
     }
 
-    buffers.push(this.buffE);
+    buffers.push(this.bufferEnd);
   }
 }
 
